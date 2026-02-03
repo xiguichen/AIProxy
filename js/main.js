@@ -48,6 +48,25 @@
             latestMessage: ['.arena-message:last-child']
         },
 
+        // Yuanbao (腾讯元宝)
+        'yuanbao.tencent.com': {
+            inputBox: [
+                '.agent-chat__input-box .ql-editor',
+                '#search-bar .ql-editor',
+                '.chat-input-editor .ql-editor[contenteditable="true"]'
+            ],
+            sendButton: [
+                '#yuanbao-send-btn',
+            ],
+            messageContainer: [
+                '#chat-content',
+            ],
+            latestMessage: [
+                '.agent-chat__list__item--ai:last-child .agent-chat__bubble__content',
+                '.agent-chat__list__item--ai:last-child'
+            ]
+        },
+
         // 通用配置
         'default': {
             inputBox: [
@@ -159,10 +178,12 @@
         }
 
         async initDOMListeners() {
-            // 等待关键DOM元素加载
+            console.log('🔍 初始化DOM监听器...');
             await this.waitForElement(CONFIG.selectors.messageContainer);
+            console.log('✅ 消息容器已加载:', CONFIG.selectors.messageContainer);
 
             // 设置MutationObserver监听消息变化
+            console.log('🔧 设置MutationObserver监听消息变化');
             this.setupMessageObserver();
 
             console.log('🔍 DOM监听器初始化完成');
@@ -300,36 +321,32 @@
             this.currentRequestId = requestData.request_id;
 
             console.log('📨 收到补全请求:', requestData.request_id);
+            const userMessage = this.extractUserMessage(requestData.messages);
 
-            try {
-                // 提取消息内容
-                const userMessage = this.extractUserMessage(requestData.messages);
-                if (!userMessage) {
-                    throw new Error('无法从请求中提取用户消息');
-                }
+            // 等待输入框可用
+            console.log('⏳ 等待输入框加载:', CONFIG.selectors.inputBox);
+            const inputBox = await this.waitForElement(CONFIG.selectors.inputBox);
+            console.log('✅ 输入框已加载:', inputBox);
 
-                // 等待输入框可用
-                const inputBox = await this.waitForElement(CONFIG.selectors.inputBox);
+            // 清空并填写消息
+            console.log('✍️ 填写消息到输入框:', userMessage);
+            await this.fillInputBox(inputBox, userMessage);
 
-                // 清空并填写消息
-                await this.fillInputBox(inputBox, userMessage);
+            // 点击发送按钮前等待1秒，防止被识别为机器人
+            await this.delay(1000);
 
-                // 点击发送按钮
-                await this.clickSendButton();
+            // 点击发送按钮
+            console.log('🖱️ 点击发送按钮:', CONFIG.selectors.sendButton);
+            await this.clickSendButton();
 
-                // 等待AI响应
-                const aiResponse = await this.waitForAIResponse();
+            // 等待AI响应
+            console.log('⏳ 等待AI响应...');
+            const aiResponse = await this.waitForAIResponse();
 
-                // 发送响应回服务器
-                this.sendCompletionResponse(requestData.request_id, aiResponse);
+            // 发送响应回服务器
+            console.log('📤 发送AI响应:', aiResponse);
+            this.sendCompletionResponse(requestData.request_id, aiResponse);
 
-            } catch (error) {
-                console.error('❌ 处理补全请求失败:', error);
-                this.sendErrorResponse(requestData.request_id, 'processing_error', error.message);
-            } finally {
-                this.isProcessing = false;
-                this.currentRequestId = null;
-            }
         }
 
         extractUserMessage(messages) {
@@ -343,33 +360,63 @@
         }
 
         async fillInputBox(inputBox, text) {
-            // 清空输入框
-            inputBox.value = '';
-            inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+            // 检查是否是元宝的输入框
+            if (inputBox.classList.contains('ql-editor') && inputBox.getAttribute('contenteditable') === 'true') {
+                // 清空输入框
+                inputBox.innerHTML = '';
 
-            // 模拟人类输入（可选，避免被检测为自动化）
-            for (let i = 0; i < text.length; i++) {
-                inputBox.value += text[i];
+                // 将文本按换行符切割
+                const lines = text.split('\n');
+
+                // 为每一行创建<p>标签并插入
+                lines.forEach(line => {
+                    const p = document.createElement('p');
+                    p.textContent = line;
+                    inputBox.appendChild(p);
+                });
+
+                // 模拟输入事件
                 inputBox.dispatchEvent(new Event('input', { bubbles: true }));
-                if (i % 10 === 0) { // 每10个字符稍微延迟
-                    await this.delay(50 + Math.random() * 50);
-                }
-            }
+            } else {
+                // 默认行为
+                inputBox.value = '';
+                inputBox.dispatchEvent(new Event('input', { bubbles: true }));
 
-            await this.delay(500); // 最终延迟
+                for (let i = 0; i < text.length; i++) {
+                    inputBox.value += text[i];
+                    inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+                    if (i % 10 === 0) {
+                        await this.delay(50 + Math.random() * 50);
+                    }
+                }
+
+                await this.delay(500);
+            }
         }
 
         async clickSendButton() {
             const sendButton = await this.waitForElement(CONFIG.selectors.sendButton);
+            console.log('✅ 发送按钮已加载:', sendButton);
+            // 检查是否是元宝的发送按钮
+            if (sendButton.id === 'yuanbao-send-btn' && sendButton.tagName.toLowerCase() === 'a') {
+                // 确保按钮未被禁用
+                if (sendButton.classList.contains('style__send-btn--disabled___mhfdQ')) {
+                    throw new Error('元宝发送按钮当前被禁用');
+                }
 
-            // 检查按钮是否可用
-            if (sendButton.disabled) {
-                throw new Error('发送按钮不可用');
+                // 模拟点击事件
+                const event = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                sendButton.dispatchEvent(event);
+                console.log('📤 元宝发送按钮已触发点击事件');
+            } else {
+                // 默认行为
+                sendButton.click();
+                console.log('📤 默认发送按钮已点击');
             }
-
-            // 模拟点击
-            sendButton.click();
-            console.log('📤 消息已发送');
         }
 
         async waitForAIResponse() {
@@ -398,12 +445,89 @@
         }
 
         getMessageCount() {
+            // 获取消息容器
             const container = this.findElement(CONFIG.selectors.messageContainer);
-            return container ? container.children.length : 0;
+            if (!container) {
+                console.warn('⚠️ 消息容器未找到，返回0');
+                return 0;
+            }
+
+            // 检查是否是元宝的消息容器
+            if (window.location.hostname === 'yuanbao.tencent.com') {
+                // 查找最后一个 class 为 'hyc-component-reasoner__text' 的元素
+                const lastReasonerTextElement = container.querySelector('.hyc-component-reasoner__text:last-of-type');
+                if (!lastReasonerTextElement) {
+                    console.warn('⚠️ 未找到任何AI消息内容，返回null');
+                    return null;
+                }
+
+                // 查找该元素下所有 class 为 'ybc-p' 的 div
+                const ybcPElements = lastReasonerTextElement.querySelectorAll('.ybc-p');
+                if (ybcPElements.length === 0) {
+                    console.warn('⚠️ 未找到任何AI消息内容，返回null');
+                    return null;
+                }
+
+                // 提取内容并合并为单个字符串
+                const combinedContent = Array.from(ybcPElements)
+                    .map(element => element.textContent.trim())
+                    .join('\n');
+
+                console.log('🤖 元宝最新AI消息内容:', combinedContent);
+                return combinedContent;
+            }
+
+            // 默认行为: 获取最后一个消息元素
+            const latestMessage = container.querySelector('.agent-chat__list__item--ai:last-child .agent-chat__bubble__content');
+            if (!latestMessage) {
+                console.warn('⚠️ 未找到最新的AI消息，返回null');
+                return null;
+            }
+
+            return latestMessage.textContent.trim();
         }
 
         getLatestMessage() {
-            return this.findElement(CONFIG.selectors.latestMessage);
+            // 获取消息容器
+            const container = this.findElement(CONFIG.selectors.messageContainer);
+            if (!container) {
+                console.warn('⚠️ 消息容器未找到，返回null');
+                return null;
+            }
+
+            // 检查是否是元宝的消息容器
+            if (window.location.hostname === 'yuanbao.tencent.com') {
+                // 查找最后一个 class 为 'hyc-component-reasoner__text' 的元素
+                const lastReasonerTextElement = container.querySelector('.hyc-component-reasoner__text:last-of-type');
+                if (!lastReasonerTextElement) {
+                    console.warn('⚠️ 未找到任何AI消息内容，返回null');
+                    return null;
+                }
+
+                // 查找该元素下所有 class 为 'ybc-p' 的 div
+                const ybcPElements = lastReasonerTextElement.querySelectorAll('.ybc-p');
+                if (ybcPElements.length === 0) {
+                    console.warn('⚠️ 未找到任何AI消息内容，返回null');
+                    return null;
+                }
+
+                // 提取内容并合并为单个字符串
+                const combinedContent = Array.from(ybcPElements)
+                    .map(element => element.textContent.trim())
+                    .join('\n');
+
+                console.log('🤖 元宝最新AI消息内容:', combinedContent);
+                return combinedContent;
+            }
+
+            // 默认行为: 获取最后一个消息元素
+            const latestMessage = container.querySelector('.agent-chat__list__item--ai:last-child .agent-chat__bubble__content');
+            if (!latestMessage) {
+                console.warn('⚠️ 未找到最新的AI消息，返回null');
+                return null;
+            }
+
+            return latestMessage.textContent.trim();
         }
 
         extractMessageText(messageElement) {
