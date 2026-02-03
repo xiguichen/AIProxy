@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Forwarder Test</title>
+</head>
+<body>
+    <div id="chat-content">
+        <div class="agent-chat__list__item">Message 1</div>
+        <div class="agent-chat__list__item">Message 2</div>
+    </div>
+    <textarea id="prompt-textarea"></textarea>
+    <button id="send-button">Send</button>
+
+    <script type="module" src="../modules/aiChatForwarder.js"></script>
+    <script>
+        import { AIChatForwarder } from '../modules/aiChatForwarder.js';
+        const forwarder = new AIChatForwarder();
+        forwarder.init();
+    </script>
+</body>
+</html>
