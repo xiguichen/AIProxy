@@ -454,12 +454,15 @@
 
             // 检查是否是元宝的消息容器
             if (window.location.hostname === 'yuanbao.tencent.com') {
-                // 查找最后一个 class 为 'hyc-component-reasoner__text' 的元素
-                const lastReasonerTextElement = container.querySelector('.hyc-component-reasoner__text:last-of-type');
+                // 查找所有 class 为 'hyc-component-reasoner__text' 的元素
+                const reasonerTextElements = Array.from(container.querySelectorAll('.hyc-component-reasoner__text'));
+                const lastReasonerTextElement = reasonerTextElements.pop();
                 if (!lastReasonerTextElement) {
                     console.warn('⚠️ 未找到任何AI消息内容，返回null');
                     return null;
                 }
+
+                console.log('🤖 元宝最新AI消息元素已找到:', lastReasonerTextElement);
 
                 // 查找该元素下所有 class 为 'ybc-p' 的 div
                 const ybcPElements = lastReasonerTextElement.querySelectorAll('.ybc-p');
@@ -503,6 +506,8 @@
                     console.warn('⚠️ 未找到任何AI消息内容，返回null');
                     return null;
                 }
+
+                console.log('🤖 元宝最新AI消息元素已找到:', lastReasonerTextElement);
 
                 // 查找该元素下所有 class 为 'ybc-p' 的 div
                 const ybcPElements = lastReasonerTextElement.querySelectorAll('.ybc-p');
