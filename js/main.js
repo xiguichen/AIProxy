@@ -609,11 +609,17 @@
         async init() {
             console.log('🤖 AI聊天转发器初始化...');
     
-            // 等待页面加载完成
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', () => this.start());
-            } else {
+            try {
+                // 等待页面加载完成
+                if (document.readyState === 'loading') {
+                    await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve));
+                }
+                
                 await this.start();
+            } catch (error) {
+                console.error('❌ 初始化失败:', error);
+                this.scheduleRetry();
+                throw error;
             }
         }
     
@@ -632,6 +638,7 @@
             } catch (error) {
                 console.error('❌ 初始化失败:', error);
                 this.scheduleRetry();
+                throw error;
             }
         }
     

@@ -1,0 +1,28 @@
+{
+  "name": "aiproxy-frontend",
+  "version": "1.0.0",
+  "description": "Frontend client for AIProxy - Tampermonkey userscript",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "build": "node src/build.js"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "jest-environment-jsdom": "^29.0.0",
+    "@babel/preset-env": "^7.20.0",
+    "babel-jest": "^29.0.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "transform": {
+      "^.+\\.jsx?$": "babel-jest"
+    },
+    "testMatch": [
+      "**/src/tests/**/*.test.js"
+    ],
+    "moduleFileExtensions": ["js", "json"],
+    "testPathIgnorePatterns": ["/node_modules/"]
+  }
+}
