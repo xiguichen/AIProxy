@@ -7,7 +7,8 @@ describe('AIChatForwarder', () => {
     beforeEach(() => {
         forwarder = new AIChatForwarder();
         CONFIG.selectors = {
-            messageContainer: ['.message-container']
+            pageReadyIndicator: ['.message-container'],
+            messageListContainer: ['.message-container']
         };
         document.body.innerHTML = '<div class="message-container"></div>';
     });

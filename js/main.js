@@ -31,7 +31,8 @@
         'chat.openai.com': {
             inputBox: ['#prompt-textarea'],
             sendButton: ['button[data-testid="send-button"]'],
-            messageContainer: ['[data-testid="conversation"]'],
+            pageReadyIndicator: ['[data-testid="conversation"]', 'main'],
+            messageListContainer: ['[data-testid="conversation"]'],
             latestMessage: ['[data-testid="conversation"] .group:last-child .text-gray-400']
         },
     
@@ -39,7 +40,8 @@
         'claude.ai': {
             inputBox: ['.prose textarea'],
             sendButton: ['button:has(svg)'],
-            messageContainer: ['.chat-messages'],
+            pageReadyIndicator: ['.chat-messages', 'main'],
+            messageListContainer: ['.chat-messages'],
             latestMessage: ['.ai-message:last-child']
         },
     
@@ -47,7 +49,8 @@
         'arena.ai': {
             inputBox: ['textarea.arena-input'],
             sendButton: ['button.arena-send'],
-            messageContainer: ['.arena-messages'],
+            pageReadyIndicator: ['.arena-messages'],
+            messageListContainer: ['.arena-messages'],
             latestMessage: ['.arena-message:last-child']
         },
     
@@ -61,8 +64,13 @@
             sendButton: [
                 '#yuanbao-send-btn',
             ],
-            messageContainer: [
-                '#chat-content',
+            pageReadyIndicator: [
+                '.agent-chat__input-box',
+                '#chat-content'
+            ],
+            messageListContainer: [
+                '.agent-chat__list',
+                '#chat-content'
             ],
             latestMessage: [
                 '.agent-chat__list__item--ai:last-child .agent-chat__bubble__content',
@@ -82,7 +90,13 @@
                 'button:contains("Send")',
                 '.send-button'
             ],
-            messageContainer: [
+            pageReadyIndicator: [
+                '.message-container',
+                '.chat-container',
+                '#chat-messages',
+                'main'
+            ],
+            messageListContainer: [
                 '.message-container',
                 '.chat-container',
                 '#chat-messages'
@@ -371,9 +385,9 @@
         }
     
         setupMessageObserver() {
-            const messageContainer = findElement(CONFIG.selectors.messageContainer);
-            if (!messageContainer) {
-                console.warn('⚠️ 未找到消息容器，将使用轮询方式');
+            const messageListContainer = findElement(CONFIG.selectors.messageListContainer);
+            if (!messageListContainer) {
+                console.warn('⚠️ 未找到消息列表容器，将使用轮询方式');
                 this.setupPolling();
                 return;
             }
@@ -386,10 +400,12 @@
                 });
             });
     
-            this.observer.observe(messageContainer, {
+            this.observer.observe(messageListContainer, {
                 childList: true,
                 subtree: true
             });
+            
+            console.log('📡 消息观察器已设置:', CONFIG.selectors.messageListContainer);
         }
     
         setupPolling() {
@@ -491,56 +507,45 @@
         }
     
         getMessageCount() {
-            // 获取消息容器
-            const container = findElement(CONFIG.selectors.messageContainer);
+            // 获取消息列表容器
+            const container = findElement(CONFIG.selectors.messageListContainer);
             if (!container) {
-                console.warn('⚠️ 消息容器未找到，返回0');
+                console.warn('⚠️ 消息列表容器未找到，返回0');
                 return 0;
             }
     
             // 检查是否是元宝的消息容器
             if (window.location.hostname === 'yuanbao.tencent.com') {
-                // 查找所有 class 为 'hyc-component-reasoner__text' 的元素
+                // 查找所有 class 为 'hyc-component-reasoner__text' 的元素（每个代表一条AI消息）
                 const reasonerTextElements = Array.from(container.querySelectorAll('.hyc-component-reasoner__text'));
-                const lastReasonerTextElement = reasonerTextElements.pop();
-                if (!lastReasonerTextElement) {
-                    console.warn('⚠️ 未找到任何AI消息内容，返回null');
-                    return null;
+                const count = reasonerTextElements.length;
+                
+                if (count === 0) {
+                    console.warn('⚠️ 未找到任何AI消息，返回0');
+                    return 0;
                 }
     
-                console.log('🤖 元宝最新AI消息元素已找到:', lastReasonerTextElement);
-    
-                // 查找该元素下所有 class 为 'ybc-p' 的 div
-                const ybcPElements = lastReasonerTextElement.querySelectorAll('.ybc-p');
-                if (ybcPElements.length === 0) {
-                    console.warn('⚠️ 未找到任何AI消息内容，返回null');
-                    return null;
-                }
-    
-                // 提取内容并合并为单个字符串
-                const combinedContent = Array.from(ybcPElements)
-                    .map(element => element.textContent.trim())
-                    .join('\n');
-    
-                console.log('🤖 元宝最新AI消息内容:', combinedContent);
-                return combinedContent;
+                console.log('🤖 元宝AI消息数量:', count);
+                return count;
             }
     
-            // 默认行为: 获取最后一个消息元素
-            const latestMessage = container.querySelector('.agent-chat__list__item--ai:last-child .agent-chat__bubble__content');
-            if (!latestMessage) {
-                console.warn('⚠️ 未找到最新的AI消息，返回null');
-                return null;
+            // 默认行为: 统计AI消息数量
+            const aiMessages = container.querySelectorAll('.agent-chat__list__item--ai');
+            const count = aiMessages.length;
+            
+            if (count === 0) {
+                console.warn('⚠️ 未找到任何AI消息，返回0');
+                return 0;
             }
     
-            return latestMessage.textContent.trim();
+            return count;
         }
     
         getLatestMessage() {
-            // 获取消息容器
-            const container = findElement(CONFIG.selectors.messageContainer);
+            // 获取消息列表容器
+            const container = findElement(CONFIG.selectors.messageListContainer);
             if (!container) {
-                console.warn('⚠️ 消息容器未找到，返回null');
+                console.warn('⚠️ 消息列表容器未找到，返回null');
                 return null;
             }
     
@@ -644,8 +649,8 @@
     
         async initDOMListeners() {
             console.log('🔍 初始化DOM监听器...');
-            await this.domManager.waitForElement(CONFIG.selectors.messageContainer);
-            console.log('✅ 消息容器已加载:', CONFIG.selectors.messageContainer);
+            await this.domManager.waitForElement(CONFIG.selectors.pageReadyIndicator);
+            console.log('✅ 页面已就绪:', CONFIG.selectors.pageReadyIndicator);
     
             // 设置MutationObserver监听消息变化
             console.log('🔧 设置MutationObserver监听消息变化');

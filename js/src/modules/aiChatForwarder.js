@@ -58,8 +58,8 @@ export class AIChatForwarder {
 
     async initDOMListeners() {
         console.log('🔍 初始化DOM监听器...');
-        await this.domManager.waitForElement(CONFIG.selectors.messageContainer);
-        console.log('✅ 消息容器已加载:', CONFIG.selectors.messageContainer);
+        await this.domManager.waitForElement(CONFIG.selectors.pageReadyIndicator);
+        console.log('✅ 页面已就绪:', CONFIG.selectors.pageReadyIndicator);
 
         // 设置MutationObserver监听消息变化
         console.log('🔧 设置MutationObserver监听消息变化');

@@ -9,7 +9,8 @@ export const WEBSITE_SELECTORS = {
     'chat.openai.com': {
         inputBox: ['#prompt-textarea'],
         sendButton: ['button[data-testid="send-button"]'],
-        messageContainer: ['[data-testid="conversation"]'],
+        pageReadyIndicator: ['[data-testid="conversation"]', 'main'],
+        messageListContainer: ['[data-testid="conversation"]'],
         latestMessage: ['[data-testid="conversation"] .group:last-child .text-gray-400']
     },
 
@@ -17,7 +18,8 @@ export const WEBSITE_SELECTORS = {
     'claude.ai': {
         inputBox: ['.prose textarea'],
         sendButton: ['button:has(svg)'],
-        messageContainer: ['.chat-messages'],
+        pageReadyIndicator: ['.chat-messages', 'main'],
+        messageListContainer: ['.chat-messages'],
         latestMessage: ['.ai-message:last-child']
     },
 
@@ -25,7 +27,8 @@ export const WEBSITE_SELECTORS = {
     'arena.ai': {
         inputBox: ['textarea.arena-input'],
         sendButton: ['button.arena-send'],
-        messageContainer: ['.arena-messages'],
+        pageReadyIndicator: ['.arena-messages'],
+        messageListContainer: ['.arena-messages'],
         latestMessage: ['.arena-message:last-child']
     },
 
@@ -39,8 +42,13 @@ export const WEBSITE_SELECTORS = {
         sendButton: [
             '#yuanbao-send-btn',
         ],
-        messageContainer: [
-            '#chat-content',
+        pageReadyIndicator: [
+            '.agent-chat__input-box',
+            '#chat-content'
+        ],
+        messageListContainer: [
+            '.agent-chat__list',
+            '#chat-content'
         ],
         latestMessage: [
             '.agent-chat__list__item--ai:last-child .agent-chat__bubble__content',
@@ -60,7 +68,13 @@ export const WEBSITE_SELECTORS = {
             'button:contains("Send")',
             '.send-button'
         ],
-        messageContainer: [
+        pageReadyIndicator: [
+            '.message-container',
+            '.chat-container',
+            '#chat-messages',
+            'main'
+        ],
+        messageListContainer: [
             '.message-container',
             '.chat-container',
             '#chat-messages'
