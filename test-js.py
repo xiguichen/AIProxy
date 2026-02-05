@@ -11,7 +11,7 @@ import sys
 def check_node():
     """Check if Node.js is installed"""
     try:
-        subprocess.run(['node', '--version'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(['node', '--version'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
         return True
     except FileNotFoundError:
         print("❌ Node.js 未安装，请先安装 Node.js。")
@@ -20,9 +20,10 @@ def check_node():
 def check_jest():
     """Check if Jest is installed"""
     try:
-        subprocess.run(['npm', 'list', 'jest'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(os.path.dirname(__file__), 'js'))
+        npm_cmd = 'npm.cmd' if os.name == 'nt' else 'npm'
+        subprocess.run([npm_cmd, 'list', 'jest'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8', cwd=os.path.join(os.path.dirname(__file__), 'js'))
         return True
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
 def install_dependencies():
@@ -36,7 +37,8 @@ def install_dependencies():
     
     print("📦 安装 JavaScript 依赖...")
     try:
-        subprocess.run(['npm', 'install'], check=True, cwd=js_dir)
+        npm_cmd = 'npm.cmd' if os.name == 'nt' else 'npm'
+        subprocess.run([npm_cmd, 'install'], check=True, cwd=js_dir, encoding='utf-8')
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ 依赖安装失败: {e}")
@@ -46,14 +48,15 @@ def run_jest_tests(test_file=None):
     """Run Jest tests"""
     js_dir = os.path.join(os.path.dirname(__file__), 'js')
     
-    cmd = ['npm', 'test']
+    npm_cmd = 'npm.cmd' if os.name == 'nt' else 'npm'
+    cmd = [npm_cmd, 'test']
     
     if test_file:
         cmd.append(test_file)
     
     print(f"🧪 运行 JavaScript 测试...\n")
     try:
-        result = subprocess.run(cmd, cwd=js_dir)
+        result = subprocess.run(cmd, cwd=js_dir, encoding='utf-8')
         return result.returncode == 0
     except subprocess.CalledProcessError as e:
         print(f"❌ 测试运行失败: {e}")

@@ -21,8 +21,16 @@ describe('AIChatForwarder', () => {
     });
 
     test('should handle initialization failure', async () => {
+        // Suppress expected error/log output
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
+        
         jest.spyOn(forwarder.domManager, 'waitForElement').mockRejectedValue(new Error('Initialization failed'));
 
         await expect(forwarder.init()).rejects.toThrow('Initialization failed');
+        
+        // Restore console
+        consoleError.mockRestore();
+        consoleLog.mockRestore();
     });
 });

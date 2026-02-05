@@ -18,6 +18,9 @@ describe('WebSocketManager', () => {
     });
 
     test('should handle connection errors', (done) => {
+        // Suppress expected error output
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+        
         // Mock WebSocket to reject
         const mockWebSocket = jest.fn(() => {
             const ws = {
@@ -40,6 +43,7 @@ describe('WebSocketManager', () => {
 
         wsManager.connect().catch((error) => {
             expect(error.message).toBe('Connection failed');
+            consoleError.mockRestore();
             done();
         });
     });
