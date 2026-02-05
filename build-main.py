@@ -16,7 +16,7 @@ def check_node():
 # 执行构建脚本
 def run_build():
     try:
-        result = subprocess.run(['node', build_script_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(['node', build_script_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         print(result.stdout)
         if result.stderr:
             print(f"⚠️ 构建警告: {result.stderr}")
