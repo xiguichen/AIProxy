@@ -481,26 +481,27 @@
             }
         }
     
-        async waitForAIResponse() {
+        async waitForAIResponse(baselineContent = null) {
             const startTime = Date.now();
-            let lastMessageCount = this.getMessageCount();
+            const baseline = baselineContent || this.getLatestMessage();
+            console.log('🔍 waitForAIResponse: 基准内容:', baseline?.substring(0, 30));
     
             while (Date.now() - startTime < CONFIG.timeouts.responseWait) {
                 await delay(1000);
     
-                const currentMessageCount = this.getMessageCount();
                 const latestMessage = this.getLatestMessage();
+                console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${latestMessage !== baseline}`);
     
-                // 检测到新消息且是AI的回复
-                if (currentMessageCount > lastMessageCount && latestMessage) {
-                    const messageText = extractMessageText(latestMessage);
-                    if (messageText && isAIMessage(latestMessage)) {
-                        console.log('🤖 收到AI回复，长度:', messageText.length);
-                        return messageText;
+                // 等待内容变化且有效
+                if (latestMessage && latestMessage.length > 0 && latestMessage !== baseline) {
+                    // 等待内容稳定（避免获取不完整内容）
+                    await delay(1500);
+                    const stableMessage = this.getLatestMessage();
+                    if (stableMessage && stableMessage.length > 0 && stableMessage === latestMessage) {
+                        console.log('🤖 收到AI回复，长度:', stableMessage.length, '内容:', stableMessage.substring(0, 50));
+                        return stableMessage;
                     }
                 }
-    
-                lastMessageCount = currentMessageCount;
             }
     
             throw new Error('等待AI响应超时');
@@ -519,14 +520,21 @@
                 // 查找所有 class 为 'hyc-component-reasoner__text' 的元素（每个代表一条AI消息）
                 const reasonerTextElements = Array.from(container.querySelectorAll('.hyc-component-reasoner__text'));
                 const count = reasonerTextElements.length;
-                
-                if (count === 0) {
-                    console.warn('⚠️ 未找到任何AI消息，返回0');
+    
+                // Also check parent containers for more reliable count
+                const parentContainer = document.querySelector('.agent-chat__list');
+                const aiListItems = parentContainer ? parentContainer.querySelectorAll('.agent-chat__list__item--ai') : [];
+                const altCount = aiListItems.length;
+    
+                const finalCount = Math.max(count, altCount);
+    
+                if (finalCount === 0) {
+                    console.warn('⚠️ 未找到任何AI消息，reasonerTextElements:', count, 'aiListItems:', altCount);
                     return 0;
                 }
     
-                console.log('🤖 元宝AI消息数量:', count);
-                return count;
+                console.log('🤖 元宝AI消息数量: reasonerTextElements=%d, aiListItems=%d, final=%d', count, altCount, finalCount);
+                return finalCount;
             }
     
             // 默认行为: 统计AI消息数量
@@ -551,14 +559,16 @@
     
             // 检查是否是元宝的消息容器
             if (window.location.hostname === 'yuanbao.tencent.com') {
-                // 查找最后一个 class 为 'hyc-component-reasoner__text' 的元素
-                const lastReasonerTextElement = container.querySelector('.hyc-component-reasoner__text:last-of-type');
+                // 获取所有 class 为 'hyc-component-reasoner__text' 的元素，取最后一个
+                const allReasonerTextElements = container.querySelectorAll('.hyc-component-reasoner__text');
+                const lastReasonerTextElement = allReasonerTextElements[allReasonerTextElements.length - 1];
+    
                 if (!lastReasonerTextElement) {
                     console.warn('⚠️ 未找到任何AI消息内容，返回null');
                     return null;
                 }
     
-                console.log('🤖 元宝最新AI消息元素已找到:', lastReasonerTextElement);
+                console.log('🤖 元宝最新AI消息元素已找到 (第%d个，共%d个)', allReasonerTextElements.length, allReasonerTextElements.length);
     
                 // 查找该元素下所有 class 为 'ybc-p' 的 div
                 const ybcPElements = lastReasonerTextElement.querySelectorAll('.ybc-p');
@@ -688,9 +698,24 @@
             console.log('🖱️ 点击发送按钮:', CONFIG.selectors.sendButton);
             await this.domManager.clickSendButton();
     
+            // 记录基准内容（避免获取到之前的消息）
+            const baselineContent = this.domManager.getLatestMessage();
+            console.log('📊 基准内容:', baselineContent?.substring(0, 30));
+    
             // 等待AI响应
             console.log('⏳ 等待AI响应...');
-            const aiResponse = await this.domManager.waitForAIResponse();
+            let aiResponse;
+            try {
+                aiResponse = await this.domManager.waitForAIResponse(baselineContent);
+            } catch (error) {
+                console.error('❌ 等待AI响应失败:', error.message);
+                // Debug: log current message count and latest message
+                console.log('📊 当前消息数量:', this.domManager.getMessageCount());
+                console.log('💬 最新消息:', this.domManager.getLatestMessage());
+                this.wsManager.sendErrorResponse(requestData.request_id, 'timeout', error.message);
+                this.isProcessing = false;
+                return;
+            }
     
             // 发送响应回服务器
             console.log('📤 发送AI响应:', aiResponse);

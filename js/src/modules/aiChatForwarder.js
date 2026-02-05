@@ -97,9 +97,24 @@ export class AIChatForwarder {
         console.log('🖱️ 点击发送按钮:', CONFIG.selectors.sendButton);
         await this.domManager.clickSendButton();
 
+        // 记录基准内容（避免获取到之前的消息）
+        const baselineContent = this.domManager.getLatestMessage();
+        console.log('📊 基准内容:', baselineContent?.substring(0, 30));
+
         // 等待AI响应
         console.log('⏳ 等待AI响应...');
-        const aiResponse = await this.domManager.waitForAIResponse();
+        let aiResponse;
+        try {
+            aiResponse = await this.domManager.waitForAIResponse(baselineContent);
+        } catch (error) {
+            console.error('❌ 等待AI响应失败:', error.message);
+            // Debug: log current message count and latest message
+            console.log('📊 当前消息数量:', this.domManager.getMessageCount());
+            console.log('💬 最新消息:', this.domManager.getLatestMessage());
+            this.wsManager.sendErrorResponse(requestData.request_id, 'timeout', error.message);
+            this.isProcessing = false;
+            return;
+        }
 
         // 发送响应回服务器
         console.log('📤 发送AI响应:', aiResponse);

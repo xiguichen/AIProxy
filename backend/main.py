@@ -1,5 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
+import os
+from pathlib import Path
 
 # Configure logger
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +19,23 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from websocket_manager import connection_manager, WebSocketDisconnect
+
+# Debug logging configuration
+DEBUG_DIR = Path("debug_logs")
+DEBUG_DIR.mkdir(exist_ok=True)
+
+def save_debug_file(filename: str, data: Any):
+    """Save data to a debug file"""
+    try:
+        filepath = DEBUG_DIR / filename
+        with open(filepath, 'w', encoding='utf-8') as f:
+            if isinstance(data, dict):
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            else:
+                f.write(str(data))
+        logger.debug(f"Debug file saved: {filepath}")
+    except Exception as e:
+        logger.error(f"Failed to save debug file {filename}: {e}")
 
 # Move the lifespan function above the FastAPI app initialization
 
@@ -210,6 +229,15 @@ async def create_chat_completion(request: OpenAIRequest):
     # 生成唯一请求ID
     request_id = f"req_{uuid.uuid4().hex[:8]}"
 
+    # Debug: 保存原始请求
+    original_request = request.dict()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_debug_file(f"{request_id}_request.json", {
+        "timestamp": timestamp,
+        "request_id": request_id,
+        "data": original_request
+    })
+
     # 获取可用客户端
     client_id = await connection_manager.get_available_client()
     if not client_id:
@@ -228,6 +256,7 @@ async def create_chat_completion(request: OpenAIRequest):
 
     try:
         # 构建转发请求（内部格式）
+        # 注意：浏览器客户端不支持流式响应，强制设为 False
         forward_request = {
             "type": "completion_request",
             "request_id": request_id,
@@ -235,14 +264,21 @@ async def create_chat_completion(request: OpenAIRequest):
             "messages": [msg.dict() for msg in request.messages],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
-            "stream": request.stream,
+            "stream": False,  # 强制关闭流式，浏览器客户端不支持
+            "original_stream": request.stream,  # 保存原始请求的 stream 值
             "timestamp": datetime.now().isoformat()
         }
+
+        # Debug: 保存转发请求
+        save_debug_file(f"{request_id}_forward.json", forward_request)
 
         # 发送请求并等待响应
         response_data = await connection_manager.send_completion_request(
             client_id, forward_request, timeout=120  # 2分钟超时
         )
+
+        # Debug: 保存客户端响应
+        save_debug_file(f"{request_id}_response.json", response_data)
 
         # 检查响应错误
         if response_data.get("error"):
@@ -268,8 +304,8 @@ async def create_chat_completion(request: OpenAIRequest):
 
         # 估算token使用量（简化版）
         prompt_text = " ".join([msg.content for msg in request.messages])
-        prompt_tokens = self._estimate_tokens(prompt_text)
-        completion_tokens = self._estimate_tokens(content)
+        prompt_tokens = _estimate_tokens(prompt_text)
+        completion_tokens = _estimate_tokens(content)
 
         openai_response = {
             "id": f"chatcmpl-{request_id}",
@@ -292,6 +328,12 @@ async def create_chat_completion(request: OpenAIRequest):
                 "total_tokens": prompt_tokens + completion_tokens
             }
         }
+
+        # Debug: 保存最终响应
+        save_debug_file(f"{request_id}_openai_response.json", openai_response)
+
+        logger.info(f"请求 {request_id} 处理完成，响应长度: {len(content)} 字符")
+        return openai_response
 
         logger.info(f"请求 {request_id} 处理完成，响应长度: {len(content)} 字符")
         return openai_response
