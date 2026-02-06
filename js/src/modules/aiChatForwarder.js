@@ -130,6 +130,14 @@ export class AIChatForwarder {
                 combinedContent += 'Do not include any text after <response_done>.\n\n';
             }
 
+            // 添加支持的工具列表（如果有）
+            if (requestData.tools && requestData.tools.length > 0) {
+                combinedContent += '# Supported Tools\n\n';
+                combinedContent += '```json\n';
+                combinedContent += JSON.stringify(requestData.tools, null, 2);
+                combinedContent += '\n```\n\n';
+            }
+
             if (userMsg) {
                 combinedContent += '# Your Task\n\n';
                 combinedContent += userMsg.content || '';
@@ -137,6 +145,7 @@ export class AIChatForwarder {
 
             console.log('📝 系统消息:', systemMsg ? '有' : '无');
             console.log('📝 用户消息:', userMsg ? '有' : '无');
+            console.log('📝 工具数量:', requestData.tools?.length || 0);
             console.log('📝 组合内容长度:', combinedContent.length);
 
             // 如果没有用户消息，返回错误

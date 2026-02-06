@@ -358,6 +358,11 @@ async def create_chat_completion(request: OpenAIRequest):
             "timestamp": datetime.now().isoformat()
         }
 
+        # 转发工具定义（如果有）
+        if request.tools:
+            forward_request["tools"] = [tool.dict() for tool in request.tools]
+            logger.info(f"转发工具数量: {len(request.tools)}")
+
         # Debug: 保存转发请求
         save_debug_file(f"{request_id}_forward.json", forward_request)
 
