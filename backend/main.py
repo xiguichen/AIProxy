@@ -14,15 +14,20 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import uuid
 import json
+import hashlib
 import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
 
 from websocket_manager import connection_manager, WebSocketDisconnect
 
-# Debug logging configuration
 DEBUG_DIR = Path("debug_logs")
 DEBUG_DIR.mkdir(exist_ok=True)
+
+def _compute_hash(data: Any) -> str:
+    """计算数据的哈希值"""
+    serialized = json.dumps(data, sort_keys=True, default=str)
+    return hashlib.md5(serialized.encode('utf-8')).hexdigest()
 
 def save_debug_file(filename: str, data: Any):
     """Save data to a debug file"""
@@ -330,22 +335,34 @@ async def create_chat_completion(request: OpenAIRequest):
     logger.info(f"处理请求 {request_id} via 客户端 {client_id}")
 
     try:
-        # 构建转发请求（内部格式）
-        # 只转发系统消息和最后一个用户消息
-        filtered_messages = []
-        
-        # 添加系统消息（如果有）
+        connection = connection_manager.active_connections.get(client_id)
+
         system_msgs = [msg for msg in request.messages if msg.role == "system"]
-        filtered_messages.extend(system_msgs)
-        
-        # 找到最后一个用户消息
+        system_content = [msg.content for msg in system_msgs if msg.content]
+        system_hash = _compute_hash(system_content) if system_content else None
+
+        tools_data = [tool.dict() for tool in request.tools] if request.tools else None
+        tools_hash = _compute_hash(tools_data) if tools_data else None
+
+        should_send_system = system_hash is None or system_hash != connection.system_prompt_hash if connection else True
+        should_send_tools = tools_hash is None or tools_hash != connection.tools_hash if connection else True
+
+        filtered_messages = []
+
+        if should_send_system and system_msgs:
+            filtered_messages.extend(system_msgs)
+            if connection:
+                connection.system_prompt_hash = system_hash
+            logger.info(f"发送系统消息 (hash: {system_hash})")
+        else:
+            logger.info(f"跳过系统消息 (hash未变化)")
+
         user_msgs = [msg for msg in request.messages if msg.role == "user"]
         if user_msgs:
             filtered_messages.append(user_msgs[-1])
-        
+
         logger.info(f"原始消息数: {len(request.messages)}, 过滤后消息数: {len(filtered_messages)}")
-        
-        # 构建转发请求（内部格式）
+
         forward_request = {
             "type": "completion_request",
             "request_id": request_id,
@@ -353,15 +370,18 @@ async def create_chat_completion(request: OpenAIRequest):
             "messages": [msg.dict() for msg in filtered_messages],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
-            "stream": False,  # 强制关闭流式，浏览器客户端不支持
-            "original_stream": request.stream,  # 保存原始请求的 stream 值
+            "stream": False,
+            "original_stream": request.stream,
             "timestamp": datetime.now().isoformat()
         }
 
-        # 转发工具定义（如果有）
-        if request.tools:
-            forward_request["tools"] = [tool.dict() for tool in request.tools]
-            logger.info(f"转发工具数量: {len(request.tools)}")
+        if should_send_tools and tools_data:
+            forward_request["tools"] = tools_data
+            if connection:
+                connection.tools_hash = tools_hash
+            logger.info(f"转发工具数量: {len(tools_data)}")
+        else:
+            logger.info(f"跳过工具定义 (hash未变化)")
 
         # Debug: 保存转发请求
         save_debug_file(f"{request_id}_forward.json", forward_request)

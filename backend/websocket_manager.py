@@ -2,6 +2,7 @@
 import asyncio
 import uuid
 import json
+import hashlib
 import logging
 from typing import Dict, Optional, Set, Any
 from enum import Enum
@@ -20,7 +21,7 @@ class ConnectionStatus(Enum):
 
 class ClientConnection:
     """客户端连接信息类"""
-    
+
     def __init__(self, websocket: WebSocket, client_id: str):
         self.websocket = websocket
         self.client_id = client_id
@@ -28,6 +29,8 @@ class ClientConnection:
         self.last_heartbeat = datetime.now()
         self.created_at = datetime.now()
         self.current_request_id: Optional[str] = None
+        self.system_prompt_hash: Optional[str] = None
+        self.tools_hash: Optional[str] = None
         
     def update_heartbeat(self):
         """更新心跳时间"""
