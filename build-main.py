@@ -1,28 +1,37 @@
 import subprocess
 import os
 import sys
+import io
 
-# 获取构建脚本路径
+# Get build script path
 build_script_path = os.path.join(os.path.dirname(__file__), 'js', 'src', 'build.js')
 
-# 检查 Node.js 是否安装
+# Check Node.js installation
 def check_node():
     try:
         subprocess.run(['node', '--version'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
-        print("❌ Node.js 未安装，请先安装 Node.js。")
+        sys.stdout.write("Node.js not installed. Please install Node.js first.\n")
         sys.exit(1)
 
-# 执行构建脚本
+# Run build script
 def run_build():
     try:
-        result = subprocess.run(['node', build_script_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
-        print(result.stdout)
-        if result.stderr:
-            print(f"⚠️ 构建警告: {result.stderr}")
-        print("✅ 构建完成: main.js 已生成")
+        result = subprocess.run(['node', build_script_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Use io.open with utf-8 encoding
+        with io.open(sys.stdout.fileno(), 'w', encoding='utf-8', closefd=False) as f:
+            try:
+                f.write(result.stdout.decode('utf-8'))
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                f.write(result.stdout.decode('gbk', errors='replace'))
+            if result.stderr:
+                try:
+                    f.write(result.stderr.decode('utf-8'))
+                except (UnicodeDecodeError, UnicodeEncodeError):
+                    f.write(result.stderr.decode('gbk', errors='replace'))
+            f.write("main.js has been generated\n")
     except subprocess.CalledProcessError as e:
-        print(f"❌ 构建失败: {e.stderr}")
+        sys.stdout.write("Build failed\n")
         sys.exit(1)
 
 if __name__ == "__main__":

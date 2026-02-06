@@ -1,10 +1,12 @@
 // 构建工具：将模块合并为一个文件
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
-const MODULES_DIR = path.resolve('./src/modules');
-const OUTPUT_FILE = path.resolve('./main.js');
+// Get absolute paths
+const SCRIPT_DIR = path.dirname(path.resolve('js/src/build.js'));
+const MODULES_DIR = path.join(SCRIPT_DIR, 'modules');
+const OUTPUT_FILE = path.join(path.dirname(SCRIPT_DIR), 'main.js');
 const HEADER = `// ==UserScript==
 // @name         OpenAI API WebSocket Forwarder
 // @namespace    http://tampermonkey.net/
@@ -55,7 +57,14 @@ function build() {
     // 运行 lint
     try {
         console.log('\n🔍 Running lint...');
-        execSync('node lint.cjs', { cwd: path.dirname(OUTPUT_FILE) });
+        const lintResult = spawnSync('node', ['lint.cjs'], { 
+            cwd: path.dirname(OUTPUT_FILE),
+            encoding: 'utf-8'
+        });
+        console.log(lintResult.stdout);
+        if (lintResult.stderr) {
+            console.log(lintResult.stderr);
+        }
         console.log('✅ Lint passed!');
     } catch (e) {
         console.error('❌ Lint failed!');

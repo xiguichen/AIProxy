@@ -331,12 +331,26 @@ async def create_chat_completion(request: OpenAIRequest):
 
     try:
         # 构建转发请求（内部格式）
-        # 注意：浏览器客户端不支持流式响应，强制设为 False
+        # 只转发系统消息和最后一个用户消息
+        filtered_messages = []
+        
+        # 添加系统消息（如果有）
+        system_msgs = [msg for msg in request.messages if msg.role == "system"]
+        filtered_messages.extend(system_msgs)
+        
+        # 找到最后一个用户消息
+        user_msgs = [msg for msg in request.messages if msg.role == "user"]
+        if user_msgs:
+            filtered_messages.append(user_msgs[-1])
+        
+        logger.info(f"原始消息数: {len(request.messages)}, 过滤后消息数: {len(filtered_messages)}")
+        
+        # 构建转发请求（内部格式）
         forward_request = {
             "type": "completion_request",
             "request_id": request_id,
             "model": request.model,
-            "messages": [msg.dict() for msg in request.messages],
+            "messages": [msg.dict() for msg in filtered_messages],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "stream": False,  # 强制关闭流式，浏览器客户端不支持
@@ -416,7 +430,7 @@ async def create_chat_completion(request: OpenAIRequest):
         # 检查是否需要构建tool_calls响应（当用户提示使用工具但AI返回普通文本时）
         # 检测 messages 中是否有 system-reminder 提示使用工具
         has_tool_hint = any(
-            msg.get("role") == "user" and "system-reminder" in msg.get("content", "")
+            hasattr(msg, 'role') and msg.role == "user" and hasattr(msg, 'content') and "system-reminder" in (msg.content or "")
             for msg in request.messages
         )
 

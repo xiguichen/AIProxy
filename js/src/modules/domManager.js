@@ -137,9 +137,18 @@ export class DOMManager {
             // 等待内容变化且有效（使用更可靠的内容比较）
             if (latestMessage && latestMessage.length > 0 && latestMessage !== baseline) {
                 // 等待内容稳定（避免获取不完整内容）
-                await delay(1500);
+                await delay(2000);
                 const stableMessage = this.getLatestMessage();
-                // 再次确认内容已变化且稳定
+                
+                // 检查是否包含 <response_done> 标记
+                if (stableMessage && stableMessage.includes('<response_done>')) {
+                    // 提取标记前的内容
+                    const finalContent = stableMessage.split('<response_done>')[0].trim();
+                    console.log('🤖 收到AI回复（带完成标记），长度:', finalContent.length);
+                    return finalContent;
+                }
+                
+                // 如果不包含完成标记且内容稳定，也返回（兼容旧响应）
                 if (stableMessage && stableMessage.length > 0 && stableMessage !== baseline) {
                     console.log('🤖 收到AI回复，长度:', stableMessage.length, '内容:', stableMessage.substring(0, 50));
                     return stableMessage;

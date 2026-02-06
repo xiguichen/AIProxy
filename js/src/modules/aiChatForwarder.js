@@ -112,66 +112,74 @@ export class AIChatForwarder {
             const conversation = this.extractConversation(requestData.messages);
             console.log('📋 对话历史数量:', conversation.length);
 
-            // 获取基准内容
-            let baselineContent = this.domManager.getLatestMessage();
-            console.log('📊 基准内容:', baselineContent?.substring(0, 30));
+            // 提取系统消息和最后一个用户消息
+            const systemMsg = conversation.find(m => m.role === 'system');
+            const userMsgs = conversation.filter(m => m.role === 'user');
+            const userMsg = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1] : null;
 
-            // 处理对话（跳过系统消息，因为浏览器AI已有上下文）
-            let allResponses = '';
-            let userMessageSent = false;
-            
-            for (let i = 0; i < conversation.length; i++) {
-                const msg = conversation[i];
-                
-                // 只处理用户消息
-                if (msg.role !== 'user') {
-                    continue;
-                }
-                
-                userMessageSent = true;
-                console.log('📝 发送用户消息', i + 1, '/', conversation.length);
+            // 构建组合内容（markdown格式）
+            let combinedContent = '';
 
-                // 等待输入框可用
-                console.log('⏳ 等待输入框加载...');
-                const inputBox = await this.domManager.waitForElement(CONFIG.selectors.inputBox);
-                console.log('✅ 输入框已加载');
-
-                // 清空并填写消息
-                console.log('✍️ 填写消息:', msg.content?.substring(0, 50));
-                await this.domManager.fillInputBox(inputBox, msg.content);
-
-                // 点击发送按钮前等待
-                await delay(1000);
-
-                // 点击发送按钮
-                console.log('🖱️ 点击发送按钮');
-                await this.domManager.clickSendButton();
-
-                // 等待AI响应
-                console.log('⏳ 等待AI响应...');
-                const response = await this.domManager.waitForAIResponse(baselineContent);
-                console.log('✅ AI响应已获取:', response?.substring(0, 30));
-
-                if (response) {
-                    allResponses += response + '\n\n';
-                }
-
-                // 更新基准内容
-                baselineContent = response;
+            if (systemMsg) {
+                combinedContent += '# Your Role\n\n';
+                combinedContent += systemMsg.content || '';
+                combinedContent += '\n\n';
+            } else {
+                // 如果没有系统消息，添加默认角色说明
+                combinedContent += 'IMPORTANT: When you finish your response, you MUST end it with exactly: <response_done>\n';
+                combinedContent += 'Do not include any text after <response_done>.\n\n';
             }
 
-            // 如果没有发送任何消息，返回错误
-            if (!userMessageSent) {
+            if (userMsg) {
+                combinedContent += '# Your Task\n\n';
+                combinedContent += userMsg.content || '';
+            }
+
+            console.log('📝 系统消息:', systemMsg ? '有' : '无');
+            console.log('📝 用户消息:', userMsg ? '有' : '无');
+            console.log('📝 组合内容长度:', combinedContent.length);
+
+            // 如果没有用户消息，返回错误
+            if (!userMsg) {
                 console.error('❌ 未找到用户消息');
                 this.wsManager.sendErrorResponse(requestData.request_id, 'error', '未找到用户消息');
                 this.isProcessing = false;
                 return;
             }
 
+            // 获取基准内容
+            const baselineContent = this.domManager.getLatestMessage();
+            console.log('📊 基准内容:', baselineContent?.substring(0, 30));
+
+            // 等待输入框可用
+            console.log('⏳ 等待输入框加载...');
+            const inputBox = await this.domManager.waitForElement(CONFIG.selectors.inputBox);
+            console.log('✅ 输入框已加载');
+
+            // 清空并填写组合消息
+            console.log('✍️ 填写组合消息:', combinedContent?.substring(0, 50));
+            await this.domManager.fillInputBox(inputBox, combinedContent);
+
+            // 点击发送按钮前等待
+            await delay(1000);
+
+            // 点击发送按钮
+            console.log('🖱️ 点击发送按钮');
+            await this.domManager.clickSendButton();
+
+            // 等待AI响应
+            console.log('⏳ 等待AI响应...');
+            const response = await this.domManager.waitForAIResponse(baselineContent);
+            console.log('✅ AI响应已获取:', response?.substring(0, 30));
+
             // 发送最终响应
-            const finalResponse = allResponses.trim();
-            console.log('📤 发送最终响应:', finalResponse?.substring(0, 50));
-            this.wsManager.sendCompletionResponse(requestData.request_id, finalResponse);
+            if (response) {
+                console.log('📤 发送AI响应:', response?.substring(0, 50));
+                this.wsManager.sendCompletionResponse(requestData.request_id, response);
+            } else {
+                console.error('❌ AI响应为空');
+                this.wsManager.sendErrorResponse(requestData.request_id, 'error', 'AI响应为空');
+            }
 
         } catch (error) {
             console.error('❌ 处理请求失败:', error.message);
