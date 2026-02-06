@@ -130,14 +130,17 @@ export class DOMManager {
             await delay(1000);
 
             const latestMessage = this.getLatestMessage();
-            console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${latestMessage !== baseline}`);
+            const hasChanged = latestMessage !== baseline && 
+                              (baseline === null || !latestMessage?.includes(baseline) || !baseline?.includes(latestMessage));
+            console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${hasChanged}`);
 
-            // 等待内容变化且有效
+            // 等待内容变化且有效（使用更可靠的内容比较）
             if (latestMessage && latestMessage.length > 0 && latestMessage !== baseline) {
                 // 等待内容稳定（避免获取不完整内容）
                 await delay(1500);
                 const stableMessage = this.getLatestMessage();
-                if (stableMessage && stableMessage.length > 0 && stableMessage === latestMessage) {
+                // 再次确认内容已变化且稳定
+                if (stableMessage && stableMessage.length > 0 && stableMessage !== baseline) {
                     console.log('🤖 收到AI回复，长度:', stableMessage.length, '内容:', stableMessage.substring(0, 50));
                     return stableMessage;
                 }

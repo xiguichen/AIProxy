@@ -127,6 +127,21 @@ export class WebSocketManager {
         console.log('📨 补全响应已发送:', requestId);
     }
 
+    sendLog(level, category, message, data = null) {
+        const logMsg = {
+            type: 'client_log',
+            client_id: this.clientId,
+            timestamp: new Date().toISOString(),
+            level: level,
+            category: category,
+            message: message,
+            data: data
+        };
+
+        this.sendMessage(logMsg);
+        console.log(`[${level.toUpperCase()}] [${category}] ${message}`, data || '');
+    }
+
     sendErrorResponse(requestId, errorCode, errorMessage) {
         const errorMsg = {
             type: 'completion_response',

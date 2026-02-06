@@ -4,16 +4,20 @@
   "type": "module",
   "description": "Frontend client for AIProxy - Tampermonkey userscript",
   "scripts": {
-    "test": "jest",
+    "lint": "node lint.cjs && node node_modules/.bin/eslint main.js",
+    "lint:basic": "node lint.cjs",
+    "lint:eslint": "node node_modules/.bin/eslint main.js",
+    "build": "node src/build.js && npm run lint:basic",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "build": "node src/build.js"
+    "test:coverage": "jest --coverage"
   },
   "devDependencies": {
-    "jest": "^29.0.0",
-    "jest-environment-jsdom": "^29.0.0",
     "@babel/preset-env": "^7.20.0",
-    "babel-jest": "^29.0.0"
+    "babel-jest": "^29.0.0",
+    "eslint": "^8.57.1",
+    "jest": "^29.0.0",
+    "jest-environment-jsdom": "^29.0.0"
   },
   "jest": {
     "testEnvironment": "jsdom",
@@ -23,7 +27,12 @@
     "testMatch": [
       "**/src/tests/**/*.test.js"
     ],
-    "moduleFileExtensions": ["js", "json"],
-    "testPathIgnorePatterns": ["/node_modules/"]
+    "moduleFileExtensions": [
+      "js",
+      "json"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/"
+    ]
   }
 }

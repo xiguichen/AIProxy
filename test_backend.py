@@ -1,6 +1,11 @@
 import requests
 import json
 import time
+import sys
+
+# 设置输出编码
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 url = "http://localhost:8000/v1/chat/completions"
 
@@ -26,23 +31,23 @@ def ask_question(question):
 
     try:
         response = requests.post(url, headers=headers, json=data, timeout=120)
-        print(f"\nQ: {question}")
-        print(f"Status: {response.status_code}")
+        print(f"\nQ: {question}", flush=True)
+        print(f"Status: {response.status_code}", flush=True)
 
         if response.status_code == 200:
             result = response.json()
             content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            print(f"A: {content.strip()}")
+            print(f"A: {content.strip()}", flush=True)
             return True
         else:
-            print(f"Error: {response.json()}")
+            print(f"Error: {response.json()}", flush=True)
             return False
 
     except requests.exceptions.Timeout:
-        print(f"Timeout (>120s)")
+        print(f"Timeout (>120s)", flush=True)
         return False
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", flush=True)
         return False
 
 print("=== Multi-Question Test ===")

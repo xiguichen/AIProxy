@@ -154,20 +154,16 @@
     // File: utils.js
     // 工具函数模块
     
-    /**
-     * 延迟函数
-     * @param {number} ms - 延迟的毫秒数
-     * @returns {Promise<void>}
-     */
+    let wsManager = null;
+    
+    function setWsManager(manager) {
+        wsManager = manager;
+    }
+    
     function delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
     
-    /**
-     * 查找元素
-     * @param {string[]} selectorsArray - CSS选择器数组
-     * @returns {Element|null}
-     */
     function findElement(selectorsArray) {
         for (const selector of selectorsArray) {
             const element = document.querySelector(selector);
@@ -178,30 +174,74 @@
         return null;
     }
     
-    /**
-     * 提取消息文本
-     * @param {Element} messageElement - 消息元素
-     * @returns {string}
-     */
     function extractMessageText(messageElement) {
-        // 尝试不同的文本提取方法
         const text = messageElement.textContent || messageElement.innerText || '';
         return text.trim().replace(/\s+/g, ' ');
     }
     
-    /**
-     * 判断是否为AI消息
-     * @param {Element} element - DOM元素
-     * @returns {boolean}
-     */
     function isAIMessage(element) {
-        // 根据类名或属性判断是否为AI消息
         const classList = element.className || '';
         return classList.includes('ai-') ||
                classList.includes('bot-') ||
                classList.includes('assistant-') ||
                element.querySelector('[data-ai-message]') !== null;
     }
+    
+    const LOG_LEVELS = {
+        DEBUG: 'debug',
+        INFO: 'info',
+        WARN: 'warn',
+        ERROR: 'error'
+    };
+    
+    const localLogs = [];
+    const MAX_LOCAL_LOGS = 100;
+    
+    function log(level, category, message, data = null) {
+        const timestamp = new Date().toISOString();
+        const logEntry = { timestamp, level, category, message, data };
+        
+        switch (level) {
+            case LOG_LEVELS.DEBUG:
+                console.debug(`[${timestamp}] [${category}] ${message}`, data || '');
+                break;
+            case LOG_LEVELS.INFO:
+                console.log(`[${timestamp}] [${category}] ${message}`, data || '');
+                break;
+            case LOG_LEVELS.WARN:
+                console.warn(`[${timestamp}] [${category}] ${message}`, data || '');
+                break;
+            case LOG_LEVELS.ERROR:
+                console.error(`[${timestamp}] [${category}] ${message}`, data || '');
+                break;
+        }
+    
+        if (wsManager && wsManager.isConnected) {
+            try {
+                wsManager.sendLog(level, category, message, data);
+                while (localLogs.length > 0) {
+                    const cached = localLogs.shift();
+                    wsManager.sendLog(cached.level, cached.category, cached.message, cached.data);
+                }
+            } catch (e) {
+                localLogs.push(logEntry);
+                if (localLogs.length > MAX_LOCAL_LOGS) {
+                    localLogs.shift();
+                }
+            }
+        } else {
+            localLogs.push(logEntry);
+            if (localLogs.length > MAX_LOCAL_LOGS) {
+                localLogs.shift();
+            }
+        }
+    }
+    
+    function debug(category, message, data) { return log(LOG_LEVELS.DEBUG, category, message, data); }
+    function info(category, message, data) { return log(LOG_LEVELS.INFO, category, message, data); }
+    function warn(category, message, data) { return log(LOG_LEVELS.WARN, category, message, data); }
+    function error(category, message, data) { return log(LOG_LEVELS.ERROR, category, message, data); }
+    
 
     // File: websocketManager.js
     // WebSocket 管理模块
@@ -331,6 +371,21 @@
     
             this.sendMessage(responseMsg);
             console.log('📨 补全响应已发送:', requestId);
+        }
+    
+        sendLog(level, category, message, data = null) {
+            const logMsg = {
+                type: 'client_log',
+                client_id: this.clientId,
+                timestamp: new Date().toISOString(),
+                level: level,
+                category: category,
+                message: message,
+                data: data
+            };
+    
+            this.sendMessage(logMsg);
+            console.log(`[${level.toUpperCase()}] [${category}] ${message}`, data || '');
         }
     
         sendErrorResponse(requestId, errorCode, errorMessage) {
@@ -490,14 +545,17 @@
                 await delay(1000);
     
                 const latestMessage = this.getLatestMessage();
-                console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${latestMessage !== baseline}`);
+                const hasChanged = latestMessage !== baseline && 
+                                  (baseline === null || !latestMessage?.includes(baseline) || !baseline?.includes(latestMessage));
+                console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${hasChanged}`);
     
-                // 等待内容变化且有效
+                // 等待内容变化且有效（使用更可靠的内容比较）
                 if (latestMessage && latestMessage.length > 0 && latestMessage !== baseline) {
                     // 等待内容稳定（避免获取不完整内容）
                     await delay(1500);
                     const stableMessage = this.getLatestMessage();
-                    if (stableMessage && stableMessage.length > 0 && stableMessage === latestMessage) {
+                    // 再次确认内容已变化且稳定
+                    if (stableMessage && stableMessage.length > 0 && stableMessage !== baseline) {
                         console.log('🤖 收到AI回复，长度:', stableMessage.length, '内容:', stableMessage.substring(0, 50));
                         return stableMessage;
                     }
@@ -607,8 +665,16 @@
     // 主逻辑模块
     class AIChatForwarder {
         constructor() {
-            this.wsManager = new WebSocketManager(CONFIG.wsServer, this);
-            this.domManager = new DOMManager(this);
+            console.log('🔍 [DEBUG] AIChatForwarder constructor starting...');
+            try {
+                this.wsManager = new WebSocketManager(CONFIG.wsServer, this);
+                console.log('🔍 [DEBUG] wsManager created');
+                setWsManager(this.wsManager);
+                this.domManager = new DOMManager(this);
+                console.log('🔍 [DEBUG] domManager created:', !!this.domManager);
+            } catch (e) {
+                console.error('❌ [ERROR] Constructor failed:', e);
+            }
             this.ws = null;
             this.clientId = null;
             this.isConnected = false;
@@ -618,7 +684,10 @@
             this.isProcessing = false;
             this.observer = null;
     
-            this.init();
+            // Start init but don't block constructor
+            this.init().catch(e => {
+                console.error('❌ [ERROR] Init failed:', e);
+            });
         }
     
         async init() {
@@ -670,68 +739,112 @@
         }
     
         async handleCompletionRequest(requestData) {
-            if (this.isProcessing) {
-                console.warn('⚠️ 正在处理其他请求，拒绝新请求');
-                this.wsManager.sendErrorResponse(requestData.request_id, 'busy', '客户端正忙');
+            console.log('🔍 [DEBUG] handleCompletionRequest called, isProcessing:', this.isProcessing, 'domManager:', !!this.domManager);
+            
+            if (!this.domManager) {
+                console.error('❌ [ERROR] domManager is undefined!');
+                this.wsManager.sendErrorResponse(requestData.request_id, 'internal_error', '客户端未初始化完成');
                 return;
+            }
+            
+            if (this.isProcessing) {
+                const timeSinceLastRequest = Date.now() - (this.lastRequestTime || 0);
+                if (timeSinceLastRequest > 180000) {
+                    console.log('⚠️ 检测到超时的请求，重置状态');
+                    this.isProcessing = false;
+                    this.currentRequestId = null;
+                } else {
+                    console.warn('⚠️ 正在处理其他请求，拒绝新请求');
+                    this.wsManager.sendErrorResponse(requestData.request_id, 'busy', '客户端正忙');
+                    return;
+                }
             }
     
             this.isProcessing = true;
+            this.lastRequestTime = Date.now();
             this.currentRequestId = requestData.request_id;
     
             console.log('📨 收到补全请求:', requestData.request_id);
-            const userMessage = this.extractUserMessage(requestData.messages);
     
-            // 等待输入框可用
-            console.log('⏳ 等待输入框加载:', CONFIG.selectors.inputBox);
-            const inputBox = await this.domManager.waitForElement(CONFIG.selectors.inputBox);
-            console.log('✅ 输入框已加载:', inputBox);
-    
-            // 清空并填写消息
-            console.log('✍️ 填写消息到输入框:', userMessage);
-            await this.domManager.fillInputBox(inputBox, userMessage);
-    
-            // 点击发送按钮前等待1秒，防止被识别为机器人
-            await delay(1000);
-    
-            // 点击发送按钮
-            console.log('🖱️ 点击发送按钮:', CONFIG.selectors.sendButton);
-            await this.domManager.clickSendButton();
-    
-            // 记录基准内容（避免获取到之前的消息）
-            const baselineContent = this.domManager.getLatestMessage();
-            console.log('📊 基准内容:', baselineContent?.substring(0, 30));
-    
-            // 等待AI响应
-            console.log('⏳ 等待AI响应...');
-            let aiResponse;
             try {
-                aiResponse = await this.domManager.waitForAIResponse(baselineContent);
-            } catch (error) {
-                console.error('❌ 等待AI响应失败:', error.message);
-                // Debug: log current message count and latest message
-                console.log('📊 当前消息数量:', this.domManager.getMessageCount());
-                console.log('💬 最新消息:', this.domManager.getLatestMessage());
-                this.wsManager.sendErrorResponse(requestData.request_id, 'timeout', error.message);
-                this.isProcessing = false;
-                return;
-            }
+                // 提取对话历史
+                const conversation = this.extractConversation(requestData.messages);
+                console.log('📋 对话历史数量:', conversation.length);
     
-            // 发送响应回服务器
-            console.log('📤 发送AI响应:', aiResponse);
-            this.wsManager.sendCompletionResponse(requestData.request_id, aiResponse);
+                // 获取基准内容
+                let baselineContent = this.domManager.getLatestMessage();
+                console.log('📊 基准内容:', baselineContent?.substring(0, 30));
+    
+                // 处理对话（跳过系统消息，因为浏览器AI已有上下文）
+                let allResponses = '';
+                let userMessageSent = false;
+                
+                for (let i = 0; i < conversation.length; i++) {
+                    const msg = conversation[i];
+                    
+                    // 只处理用户消息
+                    if (msg.role !== 'user') {
+                        continue;
+                    }
+                    
+                    userMessageSent = true;
+                    console.log('📝 发送用户消息', i + 1, '/', conversation.length);
+    
+                    // 等待输入框可用
+                    console.log('⏳ 等待输入框加载...');
+                    const inputBox = await this.domManager.waitForElement(CONFIG.selectors.inputBox);
+                    console.log('✅ 输入框已加载');
+    
+                    // 清空并填写消息
+                    console.log('✍️ 填写消息:', msg.content?.substring(0, 50));
+                    await this.domManager.fillInputBox(inputBox, msg.content);
+    
+                    // 点击发送按钮前等待
+                    await delay(1000);
+    
+                    // 点击发送按钮
+                    console.log('🖱️ 点击发送按钮');
+                    await this.domManager.clickSendButton();
+    
+                    // 等待AI响应
+                    console.log('⏳ 等待AI响应...');
+                    const response = await this.domManager.waitForAIResponse(baselineContent);
+                    console.log('✅ AI响应已获取:', response?.substring(0, 30));
+    
+                    if (response) {
+                        allResponses += response + '\n\n';
+                    }
+    
+                    // 更新基准内容
+                    baselineContent = response;
+                }
+    
+                // 如果没有发送任何消息，返回错误
+                if (!userMessageSent) {
+                    console.error('❌ 未找到用户消息');
+                    this.wsManager.sendErrorResponse(requestData.request_id, 'error', '未找到用户消息');
+                    this.isProcessing = false;
+                    return;
+                }
+    
+                // 发送最终响应
+                const finalResponse = allResponses.trim();
+                console.log('📤 发送最终响应:', finalResponse?.substring(0, 50));
+                this.wsManager.sendCompletionResponse(requestData.request_id, finalResponse);
+    
+            } catch (error) {
+                console.error('❌ 处理请求失败:', error.message);
+                this.wsManager.sendErrorResponse(requestData.request_id, 'error', error.message);
+            }
     
             this.isProcessing = false;
         }
     
-        extractUserMessage(messages) {
-            // 查找最后一条用户消息
-            for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === 'user') {
-                    return messages[i].content;
-                }
-            }
-            return null;
+        extractConversation(messages) {
+            return messages.map(msg => ({
+                role: msg.role,
+                content: msg.content
+            }));
         }
     
         scheduleRetry() {

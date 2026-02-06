@@ -10,13 +10,13 @@ logger = logging.getLogger(__name__)
 # backend/main.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import uuid
 import json
 import asyncio
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 
 from websocket_manager import connection_manager, WebSocketDisconnect
 
@@ -75,10 +75,26 @@ app.add_middleware(
 )
 
 # Pydantic模型定义（遵循OpenAI API规范）
+class FunctionDefinition(BaseModel):
+    """函数定义模型"""
+    name: str = Field(..., description="函数名称")
+    description: Optional[str] = Field(None, description="函数描述")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="参数模式")
+
+
+class Tool(BaseModel):
+    """工具定义模型"""
+    type: str = Field("function", description="工具类型")
+    function: FunctionDefinition
+
+
 class ChatCompletionMessage(BaseModel):
     """聊天消息模型"""
     role: str = Field(..., description="消息角色：system, user, assistant")
-    content: str = Field(..., description="消息内容")
+    content: Optional[str] = Field(None, description="消息内容（工具调用时可能为空）")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用列表")
+    tool_call_id: Optional[str] = Field(None, description="工具调用ID")
+
 
 class OpenAIRequest(BaseModel):
     """OpenAI API请求格式"""
@@ -90,6 +106,8 @@ class OpenAIRequest(BaseModel):
     top_p: Optional[float] = Field(1.0, ge=0, le=1, description="核采样参数")
     frequency_penalty: Optional[float] = Field(0.0, ge=-2, le=2, description="频率惩罚")
     presence_penalty: Optional[float] = Field(0.0, ge=-2, le=2, description="存在惩罚")
+    tools: Optional[List[Tool]] = Field(None, description="可用工具列表")
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = Field(None, description="工具选择策略")
 
 class OpenAIResponse(BaseModel):
     """OpenAI API响应格式"""
@@ -127,6 +145,47 @@ async def health_check():
 async def get_stats():
     """获取连接统计信息"""
     return await connection_manager.get_connection_stats()  # 修复：添加await
+
+@app.get("/logs")
+async def get_logs():
+    """获取客户端日志列表"""
+    try:
+        log_files = list(DEBUG_DIR.glob("*.log"))
+        return {
+            "status": "success",
+            "count": len(log_files),
+            "files": [f.name for f in log_files]
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/logs/{filename}")
+async def get_log_file(filename: str):
+    """获取指定日志文件内容"""
+    try:
+        filepath = DEBUG_DIR / filename
+        if filepath.exists() and filepath.suffix == ".log":
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return {
+                "status": "success",
+                "filename": filename,
+                "content": content
+            }
+        else:
+            return {"status": "error", "message": "File not found"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.delete("/logs")
+async def clear_logs():
+    """清除所有日志文件"""
+    try:
+        for log_file in DEBUG_DIR.glob("*.log"):
+            log_file.unlink()
+        return {"status": "success", "message": "Logs cleared"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # WebSocket端点（处理客户端连接）
 @app.websocket("/ws")
@@ -173,6 +232,22 @@ async def websocket_endpoint(websocket: WebSocket):
                         if client_id in connection_manager.active_connections:
                             logger.info(f"客户端注册完成: {client_id}")
                             # Add any additional logic for registration here
+                    continue
+
+                # 处理客户端日志
+                elif message_type == "client_log":
+                    await connection_manager.handle_client_log(data)
+                    # 保存日志到文件
+                    log_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id,
+                        "level": data.get("level"),
+                        "category": data.get("category"),
+                        "message": data.get("message"),
+                        "data": data.get("data")
+                    }
+                    log_filename = f"{client_id}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.log"
+                    save_debug_file(log_filename, log_data)
                     continue
 
                 # 处理未知消息类型
@@ -303,7 +378,7 @@ async def create_chat_completion(request: OpenAIRequest):
             )
 
         # 估算token使用量（简化版）
-        prompt_text = " ".join([msg.content for msg in request.messages])
+        prompt_text = " ".join([msg.content or "" for msg in request.messages])
         prompt_tokens = _estimate_tokens(prompt_text)
         completion_tokens = _estimate_tokens(content)
 
@@ -332,10 +407,167 @@ async def create_chat_completion(request: OpenAIRequest):
         # Debug: 保存最终响应
         save_debug_file(f"{request_id}_openai_response.json", openai_response)
 
-        logger.info(f"请求 {request_id} 处理完成，响应长度: {len(content)} 字符")
-        return openai_response
+        # 检查是否有tool_calls（工具调用）
+        tool_calls = response_data.get("tool_calls")
+        if tool_calls:
+            logger.info(f"请求 {request_id} 包含工具调用: {json.dumps(tool_calls, ensure_ascii=False, indent=2)}")
+            save_debug_file(f"{request_id}_tool_calls.json", tool_calls)
+
+        # 检查是否需要构建tool_calls响应（当用户提示使用工具但AI返回普通文本时）
+        # 检测 messages 中是否有 system-reminder 提示使用工具
+        has_tool_hint = any(
+            msg.get("role") == "user" and "system-reminder" in msg.get("content", "")
+            for msg in request.messages
+        )
+
+        if has_tool_hint and content:
+            # 构建包含 tool_calls 的响应（模拟工具调用）
+            openai_response_with_tools = {
+                "id": f"chatcmpl-{request_id}",
+                "object": "chat.completion",
+                "created": int(datetime.now().timestamp()),
+                "model": request.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": content,
+                            "tool_calls": [
+                                {
+                                    "id": f"call_{request_id[:8]}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "attempt_completion",
+                                        "arguments": f'{{"result": "{content[:100]}..."}}'
+                                    }
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls"
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens
+                }
+            }
+            logger.info(f"请求 {request_id} 转换为工具调用格式")
+            save_debug_file(f"{request_id}_openai_response_with_tools.json", openai_response_with_tools)
+            return openai_response_with_tools
 
         logger.info(f"请求 {request_id} 处理完成，响应长度: {len(content)} 字符")
+
+        # 如果客户端请求流式响应，使用SSE格式返回
+        if request.stream:
+            async def generate_stream():
+                chunk_id = f"chatcmpl-{request_id}"
+                created = int(datetime.now().timestamp())
+
+                # 发送角色定义
+                role_chunk = {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": request.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant"},
+                            "finish_reason": None
+                        }
+                    ]
+                }
+                yield f"data: {json.dumps(role_chunk, ensure_ascii=False)}\n\n"
+
+                # 分块发送内容（模拟流式）
+                content_chunk_size = 10  # 每块10个字符
+                for i in range(0, len(content), content_chunk_size):
+                    chunk = content[i:i + content_chunk_size]
+                    content_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": chunk},
+                                "finish_reason": None
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
+
+                # 发送完成标记
+                finish_chunk = {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": request.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop"
+                        }
+                    ]
+                }
+                yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
+
+                # 如果有工具调用提示，发送工具调用块
+                has_tool_hint = any(
+                    msg.get("role") == "user" and "system-reminder" in msg.get("content", "")
+                    for msg in request.messages
+                )
+                if has_tool_hint:
+                    tool_call_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "id": f"call_{request_id[:8]}",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "attempt_completion",
+                                                "arguments": "{}"
+                                            }
+                                        }
+                                    ]
+                                },
+                                "finish_reason": None
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(tool_call_chunk, ensure_ascii=False)}\n\n"
+                    
+                    # 发送工具调用完成
+                    tool_finish_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "tool_calls"
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(tool_finish_chunk, ensure_ascii=False)}\n\n"
+
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(generate_stream(), media_type="text/event-stream")
+
         return openai_response
 
     except TimeoutError as e:

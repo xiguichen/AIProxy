@@ -225,6 +225,11 @@ class ConnectionManager:
             logger.error("响应缺少request_id")
             return False
         
+        # 检查是否有tool_calls
+        tool_calls = response_data.get("tool_calls")
+        if tool_calls:
+            logger.info(f"客户端 {request_id} 返回工具调用: {json.dumps(tool_calls, ensure_ascii=False, indent=2)}")
+        
         async with self.response_lock:
             if request_id in self.pending_requests:
                 # 存储响应数据
@@ -246,6 +251,25 @@ class ConnectionManager:
             else:
                 logger.warning(f"收到未知请求ID的响应: {request_id}")
                 return False
+    
+    async def handle_client_log(self, log_data: dict):
+        """处理客户端日志"""
+        try:
+            log_info = {
+                "timestamp": datetime.now().isoformat(),
+                "client_id": log_data.get("client_id"),
+                "level": log_data.get("level"),
+                "category": log_data.get("category"),
+                "message": log_data.get("message"),
+                "data": log_data.get("data")
+            }
+            
+            logger.info(f"[CLIENT_LOG] [{log_info.get('level')}] [{log_info.get('category')}] {log_info.get('message')}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"处理客户端日志失败: {e}")
+            return False
     
     async def start_heartbeat_task(self):
         """启动心跳检测任务"""

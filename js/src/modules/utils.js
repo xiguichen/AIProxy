@@ -1,19 +1,15 @@
 // 工具函数模块
 
-/**
- * 延迟函数
- * @param {number} ms - 延迟的毫秒数
- * @returns {Promise<void>}
- */
+let wsManager = null;
+
+export function setWsManager(manager) {
+    wsManager = manager;
+}
+
 export function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * 查找元素
- * @param {string[]} selectorsArray - CSS选择器数组
- * @returns {Element|null}
- */
 export function findElement(selectorsArray) {
     for (const selector of selectorsArray) {
         const element = document.querySelector(selector);
@@ -24,27 +20,70 @@ export function findElement(selectorsArray) {
     return null;
 }
 
-/**
- * 提取消息文本
- * @param {Element} messageElement - 消息元素
- * @returns {string}
- */
 export function extractMessageText(messageElement) {
-    // 尝试不同的文本提取方法
     const text = messageElement.textContent || messageElement.innerText || '';
     return text.trim().replace(/\s+/g, ' ');
 }
 
-/**
- * 判断是否为AI消息
- * @param {Element} element - DOM元素
- * @returns {boolean}
- */
 export function isAIMessage(element) {
-    // 根据类名或属性判断是否为AI消息
     const classList = element.className || '';
     return classList.includes('ai-') ||
            classList.includes('bot-') ||
            classList.includes('assistant-') ||
            element.querySelector('[data-ai-message]') !== null;
 }
+
+export const LOG_LEVELS = {
+    DEBUG: 'debug',
+    INFO: 'info',
+    WARN: 'warn',
+    ERROR: 'error'
+};
+
+const localLogs = [];
+const MAX_LOCAL_LOGS = 100;
+
+export function log(level, category, message, data = null) {
+    const timestamp = new Date().toISOString();
+    const logEntry = { timestamp, level, category, message, data };
+    
+    switch (level) {
+        case LOG_LEVELS.DEBUG:
+            console.debug(`[${timestamp}] [${category}] ${message}`, data || '');
+            break;
+        case LOG_LEVELS.INFO:
+            console.log(`[${timestamp}] [${category}] ${message}`, data || '');
+            break;
+        case LOG_LEVELS.WARN:
+            console.warn(`[${timestamp}] [${category}] ${message}`, data || '');
+            break;
+        case LOG_LEVELS.ERROR:
+            console.error(`[${timestamp}] [${category}] ${message}`, data || '');
+            break;
+    }
+
+    if (wsManager && wsManager.isConnected) {
+        try {
+            wsManager.sendLog(level, category, message, data);
+            while (localLogs.length > 0) {
+                const cached = localLogs.shift();
+                wsManager.sendLog(cached.level, cached.category, cached.message, cached.data);
+            }
+        } catch (e) {
+            localLogs.push(logEntry);
+            if (localLogs.length > MAX_LOCAL_LOGS) {
+                localLogs.shift();
+            }
+        }
+    } else {
+        localLogs.push(logEntry);
+        if (localLogs.length > MAX_LOCAL_LOGS) {
+            localLogs.shift();
+        }
+    }
+}
+
+export function debug(category, message, data) { return log(LOG_LEVELS.DEBUG, category, message, data); }
+export function info(category, message, data) { return log(LOG_LEVELS.INFO, category, message, data); }
+export function warn(category, message, data) { return log(LOG_LEVELS.WARN, category, message, data); }
+export function error(category, message, data) { return log(LOG_LEVELS.ERROR, category, message, data); }
