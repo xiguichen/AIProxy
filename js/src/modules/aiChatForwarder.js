@@ -179,12 +179,20 @@ export class AIChatForwarder {
             // 等待AI响应
             console.log('⏳ 等待AI响应...');
             const response = await this.domManager.waitForAIResponse(baselineContent);
-            console.log('✅ AI响应已获取:', response?.substring(0, 30));
 
-            // 发送最终响应
             if (response) {
-                console.log('📤 发送AI响应:', response?.substring(0, 50));
-                this.wsManager.sendCompletionResponse(requestData.request_id, response);
+                const finalContent = response.content || response;
+                const toolCalls = response.tool_calls;
+
+                console.log('✅ AI响应已获取:', finalContent?.substring(0, 30));
+
+                if (toolCalls && toolCalls.length > 0) {
+                    console.log('📤 发送AI响应（含tool_calls）:', finalContent?.substring(0, 50));
+                    this.wsManager.sendCompletionResponse(requestData.request_id, finalContent, toolCalls);
+                } else {
+                    console.log('📤 发送AI响应:', finalContent?.substring(0, 50));
+                    this.wsManager.sendCompletionResponse(requestData.request_id, finalContent);
+                }
             } else {
                 console.error('❌ AI响应为空');
                 this.wsManager.sendErrorResponse(requestData.request_id, 'error', 'AI响应为空');

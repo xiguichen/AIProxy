@@ -1,4 +1,5 @@
 import { WebSocketManager } from '../modules/websocketManager.js';
+import { jest, describe, test, expect, beforeEach } from '@jest/globals';
 
 describe('WebSocketManager', () => {
     let wsManager;

@@ -1,5 +1,6 @@
 import { AIChatForwarder } from '../modules/aiChatForwarder.js';
 import { CONFIG } from '../modules/config.js';
+import { jest, describe, test, expect, beforeEach } from '@jest/globals';
 
 describe('AIChatForwarder', () => {
     let forwarder;

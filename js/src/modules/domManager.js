@@ -80,33 +80,84 @@ export class DOMManager {
             // 模拟输入事件
             inputBox.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
-            // 默认行为
-            inputBox.value = '';
-            inputBox.dispatchEvent(new Event('input', { bubbles: true }));
-
-            for (let i = 0; i < text.length; i++) {
-                inputBox.value += text[i];
-                inputBox.dispatchEvent(new Event('input', { bubbles: true }));
-                if (i % 10 === 0) {
-                    await delay(50 + Math.random() * 50);
-                }
+            // 默认行为 - 标准 textarea 输入
+            inputBox.focus();
+            inputBox.select();
+            
+            // 清空内容
+            document.execCommand('delete', false, null);
+            
+            // 使用 setRangeText 插入文本（现代浏览器支持）
+            if (typeof inputBox.setRangeText === 'function') {
+                inputBox.setRangeText(text, inputBox.selectionStart, inputBox.selectionEnd, 'end');
+            } else {
+                // Fallback: 直接赋值
+                inputBox.value = text;
             }
-
-            await delay(500);
+            
+            // 移动光标到末尾
+            inputBox.selectionStart = inputBox.value.length;
+            inputBox.selectionEnd = inputBox.value.length;
+            
+            // 触发事件序列
+            inputBox.dispatchEvent(new Event('focus', { bubbles: true }));
+            inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+            inputBox.dispatchEvent(new Event('change', { bubbles: true }));
+            inputBox.dispatchEvent(new Event('blur', { bubbles: true }));
+            
+            await delay(300);
         }
     }
 
     async clickSendButton() {
         const sendButton = await this.waitForElement(CONFIG.selectors.sendButton);
         console.log('✅ 发送按钮已加载:', sendButton);
-        // 检查是否是元宝的发送按钮
-        if (sendButton.id === 'yuanbao-send-btn' && sendButton.tagName.toLowerCase() === 'a') {
-            // 确保按钮未被禁用
-            if (sendButton.classList.contains('style__send-btn--disabled___mhfdQ')) {
-                throw new Error('元宝发送按钮当前被禁用');
-            }
 
-            // 模拟点击事件
+        const isDisabled = () => {
+            // 检查多种禁用状态
+            if (sendButton.id === 'yuanbao-send-btn') {
+                return sendButton.classList.contains('style__send-btn--disabled___mhfdQ');
+            }
+            // Arena.ai 使用 disabled 属性或 opacity/pointer-events 类
+            if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
+                return sendButton.hasAttribute('disabled') || 
+                       sendButton.classList.contains('opacity-50') ||
+                       sendButton.classList.contains('pointer-events-none');
+            }
+            return sendButton.disabled;
+        };
+
+        for (let attempt = 0; attempt < 10; attempt++) {
+            if (!isDisabled()) {
+                break;
+            }
+            console.log('⚠️ 发送按钮被禁用，等待1秒后重试... (' + (attempt + 1) + '/10)');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
+        if (isDisabled()) {
+            console.warn('⚠️ 发送按钮持续被禁用，尝试强制启用...');
+            
+            // 尝试强制移除禁用状态（Arena.ai）
+            if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
+                sendButton.removeAttribute('disabled');
+                sendButton.classList.remove('opacity-50', 'pointer-events-none');
+                sendButton.style.opacity = '1';
+                sendButton.style.pointerEvents = 'auto';
+                
+                await delay(200);
+                
+                if (!isDisabled()) {
+                    console.log('✅ 已强制启用发送按钮');
+                }
+            }
+            
+            if (isDisabled()) {
+                throw new Error('发送按钮持续被禁用，无法点击');
+            }
+        }
+
+        if (sendButton.id === 'yuanbao-send-btn' && sendButton.tagName.toLowerCase() === 'a') {
             const event = new MouseEvent('click', {
                 bubbles: true,
                 cancelable: true,
@@ -115,9 +166,9 @@ export class DOMManager {
             sendButton.dispatchEvent(event);
             console.log('📤 元宝发送按钮已触发点击事件');
         } else {
-            // 默认行为
+            // 默认点击行为
             sendButton.click();
-            console.log('📤 默认发送按钮已点击');
+            console.log('📤 发送按钮已点击');
         }
     }
 
@@ -130,28 +181,45 @@ export class DOMManager {
             await delay(1000);
 
             const latestMessage = this.getLatestMessage();
-            const hasChanged = latestMessage !== baseline && 
+            const hasChanged = latestMessage !== baseline &&
                               (baseline === null || !latestMessage?.includes(baseline) || !baseline?.includes(latestMessage));
             console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${hasChanged}`);
 
-            // 等待内容变化且有效（使用更可靠的内容比较）
             if (latestMessage && latestMessage.length > 0 && latestMessage !== baseline) {
-                // 等待内容稳定（避免获取不完整内容）
                 await delay(2000);
                 const stableMessage = this.getLatestMessage();
-                
-                // 检查是否包含 <response_done> 标记
+
                 if (stableMessage && stableMessage.includes('<response_done>')) {
-                    // 提取标记前的内容
-                    const finalContent = stableMessage.split('<response_done>')[0].trim();
-                    console.log('🤖 收到AI回复（带完成标记），长度:', finalContent.length);
-                    return finalContent;
+                    const contentStart = stableMessage.indexOf('<content>') + '<content>'.length;
+                    const contentEnd = stableMessage.indexOf('</content>');
+                    const toolCallsStart = stableMessage.indexOf('<tool_calls>');
+                    const toolCallsEnd = stableMessage.indexOf('</tool_calls>');
+
+                    let finalContent = '';
+                    let toolCalls = null;
+
+                    if (contentStart > -1 && contentEnd > -1) {
+                        finalContent = stableMessage.substring(contentStart, contentEnd).trim();
+                    } else {
+                        finalContent = stableMessage.split('<response_done>')[0].trim();
+                    }
+
+                    if (toolCallsStart > -1 && toolCallsEnd > -1) {
+                        const toolCallsJson = stableMessage.substring(toolCallsStart + '<tool_calls>'.length, toolCallsEnd).trim();
+                        try {
+                            toolCalls = JSON.parse(toolCallsJson);
+                        } catch (e) {
+                            console.warn('⚠️ 解析tool_calls失败:', e);
+                        }
+                    }
+
+                    console.log('🤖 收到AI回复（XML格式），内容长度:', finalContent.length, 'tool_calls:', toolCalls ? toolCalls.length : 0);
+                    return { content: finalContent, tool_calls: toolCalls };
                 }
-                
-                // 如果不包含完成标记且内容稳定，也返回（兼容旧响应）
+
                 if (stableMessage && stableMessage.length > 0 && stableMessage !== baseline) {
                     console.log('🤖 收到AI回复，长度:', stableMessage.length, '内容:', stableMessage.substring(0, 50));
-                    return stableMessage;
+                    return { content: stableMessage, tool_calls: null };
                 }
             }
         }
@@ -189,6 +257,31 @@ export class DOMManager {
             return finalCount;
         }
 
+        // 检查是否是 Arena.ai
+        if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
+            // Arena.ai 使用 .mx-auto.max-w-[800px] 选择器
+            // AI 消息没有 justify-end 类，用户消息有 justify-end 类
+            const messageElements = container.querySelectorAll('.mx-auto.max-w-\\[800px\\]');
+            let aiMessageCount = 0;
+
+            messageElements.forEach(el => {
+                if (!el.classList.contains('justify-end')) {
+                    // 检查是否有 .prose 内容（AI 消息）
+                    if (el.querySelector('.prose')) {
+                        aiMessageCount++;
+                    }
+                }
+            });
+
+            if (aiMessageCount === 0) {
+                console.warn('⚠️ Arena.ai 未找到任何AI消息，返回0');
+                return 0;
+            }
+
+            console.log('🤖 Arena.ai AI消息数量: %d', aiMessageCount);
+            return aiMessageCount;
+        }
+        
         // 默认行为: 统计AI消息数量
         const aiMessages = container.querySelectorAll('.agent-chat__list__item--ai');
         const count = aiMessages.length;
@@ -207,6 +300,41 @@ export class DOMManager {
         if (!container) {
             console.warn('⚠️ 消息列表容器未找到，返回null');
             return null;
+        }
+
+        // 检查是否是 Arena.ai
+        if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
+            // Arena.ai 使用 flex-col-reverse，视觉上反转了顺序
+            // 在 DOM 中，最新消息是最后一个满足条件的子元素
+            const messageElements = container.querySelectorAll('.mx-auto.max-w-\\[800px\\]');
+            if (messageElements.length === 0) {
+                console.warn('⚠️ Arena.ai 未找到消息元素，返回null');
+                return null;
+            }
+
+            // 由于 flex-col-reverse，DOM 中第一个元素是视觉上最新的
+            // 所以应该取第一个找到的 AI 消息（没有 justify-end 类的）
+            let latestAIMessage = null;
+            for (let i = 0; i < messageElements.length; i++) {
+                const el = messageElements[i];
+                // 检查是否是 AI 消息（没有 justify-end 类）
+                if (!el.classList.contains('justify-end')) {
+                    const prose = el.querySelector('.prose');
+                    if (prose) {
+                        latestAIMessage = prose;
+                        // 由于 flex-col-reverse，第一个找到的就是最新的，退出循环
+                        break;
+                    }
+                }
+            }
+
+            if (!latestAIMessage) {
+                console.warn('⚠️ Arena.ai 未找到AI消息内容，返回null');
+                return null;
+            }
+
+            console.log('🤖 Arena.ai 最新AI消息已找到');
+            return latestAIMessage.textContent.trim();
         }
 
         // 检查是否是元宝的消息容器

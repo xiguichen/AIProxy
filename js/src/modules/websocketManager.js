@@ -114,7 +114,7 @@ export class WebSocketManager {
         this.sendMessage(response);
     }
 
-    sendCompletionResponse(requestId, content) {
+    sendCompletionResponse(requestId, content, toolCalls = null) {
         const responseMsg = {
             type: 'completion_response',
             request_id: requestId,
@@ -123,8 +123,12 @@ export class WebSocketManager {
             error: null
         };
 
+        if (toolCalls) {
+            responseMsg.tool_calls = toolCalls;
+        }
+
         this.sendMessage(responseMsg);
-        console.log('📨 补全响应已发送:', requestId);
+        console.log('📨 补全响应已发送:', requestId, toolCalls ? '(含tool_calls)' : '');
     }
 
     sendLog(level, category, message, data = null) {

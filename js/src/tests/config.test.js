@@ -42,4 +42,32 @@ describe('WEBSITE_SELECTORS', () => {
         expect(yuanbaoConfig.pageReadyIndicator).toContain('.agent-chat__input-box');
         expect(yuanbaoConfig.messageListContainer).toContain('.agent-chat__list');
     });
+
+    test('arena.ai should have correct selectors', () => {
+        const arenaConfig = WEBSITE_SELECTORS['arena.ai'];
+        expect(arenaConfig).toBeDefined();
+        expect(arenaConfig.inputBox).toContain('textarea[name="message"]');
+        expect(arenaConfig.sendButton).toContain('button[type="submit"]');
+        expect(arenaConfig.pageReadyIndicator).toContain('#chat-area');
+        expect(arenaConfig.pageReadyIndicator).toContain('#root-portal-target');
+        expect(arenaConfig.messageListContainer).toContain('main');
+    });
+
+    test('arena.ai should have all required fields', () => {
+        const arenaConfig = WEBSITE_SELECTORS['arena.ai'];
+        expect(arenaConfig.inputBox).toBeDefined();
+        expect(arenaConfig.sendButton).toBeDefined();
+        expect(arenaConfig.pageReadyIndicator).toBeDefined();
+        expect(arenaConfig.messageListContainer).toBeDefined();
+        expect(arenaConfig.latestMessage).toBeDefined();
+        expect(Array.isArray(arenaConfig.inputBox)).toBe(true);
+        expect(Array.isArray(arenaConfig.sendButton)).toBe(true);
+    });
+
+    test('arena.ai latestMessage should use flex-col-reverse compatible selector', () => {
+        const arenaConfig = WEBSITE_SELECTORS['arena.ai'];
+        // Arena.ai uses flex-col-reverse. AI messages lack 'justify-end' class.
+        // The latest AI message is identified by filtering for elements without 'justify-end'.
+        expect(arenaConfig.latestMessage).toContain('ol.mt-8.flex');
+    });
 });

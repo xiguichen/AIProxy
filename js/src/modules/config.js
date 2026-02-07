@@ -25,11 +25,13 @@ export const WEBSITE_SELECTORS = {
 
     // Arena.ai
     'arena.ai': {
-        inputBox: ['textarea.arena-input'],
-        sendButton: ['button.arena-send'],
-        pageReadyIndicator: ['.arena-messages'],
-        messageListContainer: ['.arena-messages'],
-        latestMessage: ['.arena-message:last-child']
+        inputBox: ['textarea[name="message"]'],
+        sendButton: ['button[type="submit"]'],
+        pageReadyIndicator: ['#chat-area', '#root-portal-target'],
+        messageListContainer: ['main'],
+        // Arena.ai uses flex-col-reverse. AI messages lack 'justify-end' class.
+        // The latest AI message is identified by filtering for elements without 'justify-end'.
+        latestMessage: ['ol.mt-8.flex']
     },
 
     // Yuanbao (腾讯元宝)

@@ -29,6 +29,28 @@ def _compute_hash(data: Any) -> str:
     serialized = json.dumps(data, sort_keys=True, default=str)
     return hashlib.md5(serialized.encode('utf-8')).hexdigest()
 
+def _parse_xml_response(xml_content: str) -> dict:
+    """解析XML格式的响应，提取content和tool_calls"""
+    result = {"content": "", "tool_calls": None}
+
+    content_start = xml_content.find('<content>')
+    content_end = xml_content.find('</content>')
+    if content_start > -1 and content_end > -1:
+        result["content"] = xml_content[content_start + len('<content>'):content_end].strip()
+    else:
+        result["content"] = xml_content.split('<response_done>')[0].strip()
+
+    tool_calls_start = xml_content.find('<tool_calls>')
+    tool_calls_end = xml_content.find('</tool_calls>')
+    if tool_calls_start > -1 and tool_calls_end > -1:
+        tool_calls_json = xml_content[tool_calls_start + len('<tool_calls>'):tool_calls_end].strip()
+        try:
+            result["tool_calls"] = json.loads(tool_calls_json)
+        except json.JSONDecodeError as e:
+            logger.warning(f"解析tool_calls JSON失败: {e}")
+
+    return result
+
 def save_debug_file(filename: str, data: Any):
     """Save data to a debug file"""
     try:
@@ -350,6 +372,37 @@ async def create_chat_completion(request: OpenAIRequest):
         filtered_messages = []
 
         if should_send_system and system_msgs:
+            for msg in system_msgs:
+                original_content = msg.content or ""
+                if "RESPONSE FORMAT" not in original_content:
+                    format_requirements = """
+
+====
+
+RESPONSE FORMAT
+
+Your response MUST use the following XML format. Do NOT use code blocks like ```xml.
+
+<content>
+[Your response text here. This field is REQUIRED and must contain your main response.]
+Write freely - you can include any characters, quotes, brackets, or special symbols. They will be parsed correctly.
+</content>
+<tool_calls>
+[Optional: if you need to call tools, include a JSON array here like [{"name": "tool_name", "arguments": {"key": "value"}}]
+If no tools are needed, omit this entire <tool_calls> section entirely.
+]
+</tool_calls>
+
+IMPORTANT:
+1. The <content> tag MUST be present and contain your main response
+2. The <tool_calls> section is OPTIONAL - only include it if you're calling tools
+3. Do NOT use code block markers (no ```xml or ```)
+4. Write your content naturally - special characters are handled automatically
+5. When calling tools, use valid JSON inside <tool_calls>
+6. ALWAYS end your response with <response_done> on its own line
+"""
+                    new_content = original_content + format_requirements
+                    msg.content = new_content
             filtered_messages.extend(system_msgs)
             if connection:
                 connection.system_prompt_hash = system_hash
@@ -409,7 +462,17 @@ async def create_chat_completion(request: OpenAIRequest):
             )
 
         # 构建OpenAI兼容响应
-        content = response_data.get("content", "")
+        raw_content = response_data.get("content", "")
+
+        parsed = _parse_xml_response(raw_content)
+        content = parsed["content"]
+        tool_calls = parsed.get("tool_calls")
+
+        if not tool_calls:
+            tool_calls = response_data.get("tool_calls")
+            if tool_calls:
+                logger.info(f"从响应顶层获取到 tool_calls: {json.dumps(tool_calls, ensure_ascii=False, indent=2)}")
+
         if not content:
             raise HTTPException(
                 status_code=500,
@@ -443,14 +506,13 @@ async def create_chat_completion(request: OpenAIRequest):
             }
         }
 
-        # Debug: 保存最终响应
-        save_debug_file(f"{request_id}_openai_response.json", openai_response)
-
-        # 检查是否有tool_calls（工具调用）
-        tool_calls = response_data.get("tool_calls")
         if tool_calls:
             logger.info(f"请求 {request_id} 包含工具调用: {json.dumps(tool_calls, ensure_ascii=False, indent=2)}")
             save_debug_file(f"{request_id}_tool_calls.json", tool_calls)
+            openai_response["choices"][0]["message"]["tool_calls"] = tool_calls
+            openai_response["choices"][0]["finish_reason"] = "tool_calls"
+
+        save_debug_file(f"{request_id}_openai_response.json", openai_response)
 
         # 检查是否需要构建tool_calls响应（当用户提示使用工具但AI返回普通文本时）
         # 检测 messages 中是否有 system-reminder 提示使用工具
