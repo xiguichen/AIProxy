@@ -101,31 +101,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic模型定义（遵循OpenAI API规范）
+# Pydantic model definition（followingOpenAI API规范）
 class FunctionDefinition(BaseModel):
-    """函数定义模型"""
+    """函数定义model"""
     name: str = Field(..., description="函数名称")
     description: Optional[str] = Field(None, description="函数描述")
     parameters: Optional[Dict[str, Any]] = Field(None, description="参数模式")
 
 
 class Tool(BaseModel):
-    """工具定义模型"""
+    """工具定义model"""
     type: str = Field("function", description="工具类型")
     function: FunctionDefinition
 
 
 class ChatCompletionMessage(BaseModel):
-    """聊天消息模型"""
+    """聊天消息model"""
     role: str = Field(..., description="消息角色：system, user, assistant")
-    content: Optional[str] = Field(None, description="消息内容（工具调用时可能为空）")
+    content: Optional[str] = Field(None, description="message content（possibly empty when using tools）")
     tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用列表")
     tool_call_id: Optional[str] = Field(None, description="工具调用ID")
 
 
 class OpenAIRequest(BaseModel):
     """OpenAI API请求格式"""
-    model: str = Field(..., description="模型名称")
+    model: str = Field(..., description="model名称")
     messages: List[ChatCompletionMessage] = Field(..., description="消息列表")
     temperature: Optional[float] = Field(0.7, ge=0, le=2, description="温度参数")
     max_tokens: Optional[int] = Field(None, ge=1, description="最大token数")
@@ -148,7 +148,7 @@ class OpenAIResponse(BaseModel):
 # 基础端点
 @app.get("/")
 async def root():
-    """根端点，返回服务状态"""
+    """根端点，Return服务状态"""
     stats = await connection_manager.get_connection_stats()  # 修复：添加await
     return {
         "status": "online",
@@ -214,10 +214,10 @@ async def clear_logs():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# WebSocket端点（处理客户端连接）
+# WebSocket endpoint（handle client connection）
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket主端点，处理客户端连接"""
+    """WebSocket主端点，handle client connection"""
     client_id = None
     try:
         # 建立连接并获取客户端ID
@@ -308,7 +308,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info(f"WebSocket连接断开: {client_id}")
     except Exception as e:
-        logger.error(f"WebSocket端点错误: {e}")
+        logger.error(f"WebSocket endpoint错误: {e}")
     finally:
         if client_id:
             await connection_manager.disconnect(client_id)
@@ -318,7 +318,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def create_chat_completion(request: OpenAIRequest):
     """
     OpenAI补全API端点，接收请求并转发到客户端
-    完全兼容OpenAI官方API格式
+    完全compatibleOpenAI官方API格式
     """
 
     # 验证请求参数
@@ -347,7 +347,7 @@ async def create_chat_completion(request: OpenAIRequest):
             status_code=503,
             detail={
                 "error": {
-                    "message": "当前没有可用的客户端连接，请稍后重试",
+                    "message": "No available client connections, please try again later",
                     "type": "service_unavailable",
                     "code": 503
                 }
@@ -432,7 +432,7 @@ IMPORTANT:
             forward_request["tools"] = tools_data
             if connection:
                 connection.tools_hash = tools_hash
-            logger.info(f"转发工具数量: {len(tools_data)}")
+            logger.info(f"转发工具count: {len(tools_data)}")
         else:
             logger.info(f"跳过工具定义 (hash未变化)")
 
@@ -454,14 +454,14 @@ IMPORTANT:
                 status_code=500,
                 detail={
                     "error": {
-                        "message": error_info.get("message", "客户端处理请求时发生错误"),
+                        "message": error_info.get("message", "Error occurred while client processed request"),
                         "type": error_info.get("type", "client_error"),
                         "code": error_info.get("code", 500)
                     }
                 }
             )
 
-        # 构建OpenAI兼容响应
+        # 构建OpenAIcompatible响应
         raw_content = response_data.get("content", "")
 
         parsed = _parse_xml_response(raw_content)
@@ -476,10 +476,10 @@ IMPORTANT:
         if not content:
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"message": "客户端返回空响应", "type": "empty_response"}}
+                detail={"error": {"message": "客户端Return空响应", "type": "empty_response"}}
             )
 
-        # 估算token使用量（简化版）
+        # Estimatetoken使用量（简化版）
         prompt_text = " ".join([msg.content or "" for msg in request.messages])
         prompt_tokens = _estimate_tokens(prompt_text)
         completion_tokens = _estimate_tokens(content)
@@ -514,7 +514,7 @@ IMPORTANT:
 
         save_debug_file(f"{request_id}_openai_response.json", openai_response)
 
-        # 检查是否需要构建tool_calls响应（当用户提示使用工具但AI返回普通文本时）
+        # 检查是否需要构建tool_calls响应（当用户提示使用工具但AIReturn普通text时）
         # 检测 messages 中是否有 system-reminder 提示使用工具
         has_tool_hint = any(
             hasattr(msg, 'role') and msg.role == "user" and hasattr(msg, 'content') and "system-reminder" in (msg.content or "")
@@ -560,7 +560,7 @@ IMPORTANT:
 
         logger.info(f"请求 {request_id} 处理完成，响应长度: {len(content)} 字符")
 
-        # 如果客户端请求流式响应，使用SSE格式返回
+        # 如果客户端请求流式响应，使用SSE格式Return
         if request.stream:
             async def generate_stream():
                 chunk_id = f"chatcmpl-{request_id}"
@@ -672,7 +672,7 @@ IMPORTANT:
         return openai_response
 
     except TimeoutError as e:
-        logger.error(f"请求超时: {request_id} - {str(e)}")
+        logger.error(f"Request timeout: {request_id} - {str(e)}")
         raise HTTPException(
             status_code=504,
             detail={
@@ -693,7 +693,7 @@ IMPORTANT:
             status_code=500,
             detail={
                 "error": {
-                    "message": f"内部服务器错误: {str(e)}",
+                    "message": f"Internal server error: {str(e)}",
                     "type": "internal_error",
                     "code": 500
                 }
@@ -701,7 +701,7 @@ IMPORTANT:
         )
 
 def _estimate_tokens(text: str) -> int:
-    """估算文本的token数量（简化实现）"""
+    """Estimatetext的tokencount（simplified implementation）"""
     if not text:
         return 0
     return max(len(text) // 4, 1)
@@ -709,7 +709,7 @@ def _estimate_tokens(text: str) -> int:
 # 其他辅助端点
 @app.get("/v1/models")
 async def list_models():
-    """返回支持的模型列表（兼容OpenAI API）"""
+    """Returnsupported model list（compatibleOpenAI API）"""
     return {
         "object": "list",
         "data": [

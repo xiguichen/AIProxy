@@ -10,6 +10,26 @@ export function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * 带随机性的延迟函数，模拟人类行为
+ * @param {number} minMs 最小延迟时间（毫秒）
+ * @param {number} maxMs 最大延迟时间（毫秒）
+ * @returns {Promise<void>}
+ */
+export function randomDelay(minMs, maxMs) {
+    const delayMs = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+    return new Promise(resolve => setTimeout(resolve, delayMs));
+}
+
+/**
+ * 随机选择一个延迟值
+ * @param {Array<number>} delays 延迟时间数组
+ * @returns {number} 随机选择的延迟时间
+ */
+export function randomChoice(delays) {
+    return delays[Math.floor(Math.random() * delays.length)];
+}
+
 export function findElement(selectorsArray) {
     for (const selector of selectorsArray) {
         const element = document.querySelector(selector);

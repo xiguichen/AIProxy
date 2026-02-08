@@ -2,7 +2,7 @@
 import { CONFIG } from './config.js';
 import { WebSocketManager } from './websocketManager.js';
 import { DOMManager } from './domManager.js';
-import { delay, setWsManager, log, debug, info, warn, error } from './utils.js';
+import { delay, randomDelay, setWsManager, log, debug, info, warn, error } from './utils.js';
 
 export class AIChatForwarder {
     constructor() {
@@ -26,7 +26,7 @@ export class AIChatForwarder {
         this.observer = null;
 
         // Start init but don't block constructor
-        this.init().catch(e => {
+        this.init().catch(async (e) => {
             console.error('❌ [ERROR] Init failed:', e);
         });
     }
@@ -69,11 +69,14 @@ export class AIChatForwarder {
 
     async initDOMListeners() {
         console.log('🔍 初始化DOM监听器...');
+        // 添加随机等待，模拟页面加载过程
+        await randomDelay(500, 2000);
         await this.domManager.waitForElement(CONFIG.selectors.pageReadyIndicator);
         console.log('✅ 页面已就绪:', CONFIG.selectors.pageReadyIndicator);
 
         // 设置MutationObserver监听消息变化
         console.log('🔧 设置MutationObserver监听消息变化');
+        await randomDelay(300, 800);
         this.domManager.setupMessageObserver();
 
         console.log('🔍 DOM监听器初始化完成');
@@ -170,14 +173,15 @@ export class AIChatForwarder {
             await this.domManager.fillInputBox(inputBox, combinedContent);
 
             // 点击发送按钮前等待
-            await delay(1000);
+            await randomDelay(500, 2000);
 
             // 点击发送按钮
             console.log('🖱️ 点击发送按钮');
             await this.domManager.clickSendButton();
 
-            // 等待AI响应
+            // 等待AI响应（添加随机性）
             console.log('⏳ 等待AI响应...');
+            await randomDelay(500, 1500);
             const response = await this.domManager.waitForAIResponse(baselineContent);
 
             if (response) {

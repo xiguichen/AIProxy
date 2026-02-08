@@ -166,6 +166,26 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
     
+    /**
+     * 带随机性的延迟函数，模拟人类行为
+     * @param {number} minMs 最小延迟时间（毫秒）
+     * @param {number} maxMs 最大延迟时间（毫秒）
+     * @returns {Promise<void>}
+     */
+    function randomDelay(minMs, maxMs) {
+        const delayMs = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+        return new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    
+    /**
+     * 随机选择一个延迟值
+     * @param {Array<number>} delays 延迟时间数组
+     * @returns {number} 随机选择的延迟时间
+     */
+    function randomChoice(delays) {
+        return delays[Math.floor(Math.random() * delays.length)];
+    }
+    
     function findElement(selectorsArray) {
         for (const selector of selectorsArray) {
             const element = document.querySelector(selector);
@@ -483,6 +503,9 @@
         }
     
         async fillInputBox(inputBox, text) {
+            // 添加随机延迟，模拟人类输入
+            await randomDelay(100, 500);
+    
             // 检查是否是元宝的输入框
             if (inputBox.classList.contains('ql-editor') && inputBox.getAttribute('contenteditable') === 'true') {
                 // 清空输入框
@@ -492,22 +515,38 @@
                 const lines = text.split('\n');
     
                 // 为每一行创建<p>标签并插入
-                lines.forEach(line => {
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    // 每行之间添加随机延迟
+                    if (i > 0) await randomDelay(50, 200);
+    
                     const p = document.createElement('p');
                     p.textContent = line;
                     inputBox.appendChild(p);
-                });
+                }
     
                 // 模拟输入事件
                 inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+    
+                // 额外延迟
+                await randomDelay(200, 600);
             } else {
                 // 默认行为 - 标准 textarea 输入
                 inputBox.focus();
+    
+                // 随机选择焦点动画方式
+                const focusDelay = randomChoice([100, 150, 200, 250]);
+                await delay(focusDelay);
+    
                 inputBox.select();
-                
+    
+                // 随机光标动画
+                const cursorAnimations = [100, 150, 200, 250];
+                await delay(randomChoice(cursorAnimations));
+    
                 // 清空内容
                 document.execCommand('delete', false, null);
-                
+    
                 // 使用 setRangeText 插入文本（现代浏览器支持）
                 if (typeof inputBox.setRangeText === 'function') {
                     inputBox.setRangeText(text, inputBox.selectionStart, inputBox.selectionEnd, 'end');
@@ -515,24 +554,34 @@
                     // Fallback: 直接赋值
                     inputBox.value = text;
                 }
-                
+    
                 // 移动光标到末尾
                 inputBox.selectionStart = inputBox.value.length;
                 inputBox.selectionEnd = inputBox.value.length;
-                
-                // 触发事件序列
+    
+                // 触发事件序列（添加随机性）
                 inputBox.dispatchEvent(new Event('focus', { bubbles: true }));
+                await randomDelay(50, 150);
+    
                 inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+                await randomDelay(50, 150);
+    
                 inputBox.dispatchEvent(new Event('change', { bubbles: true }));
+                await randomDelay(50, 150);
+    
                 inputBox.dispatchEvent(new Event('blur', { bubbles: true }));
-                
-                await delay(300);
+    
+                await randomDelay(200, 500);
             }
         }
     
         async clickSendButton() {
+            // 等待发送按钮加载
             const sendButton = await this.waitForElement(CONFIG.selectors.sendButton);
             console.log('✅ 发送按钮已加载:', sendButton);
+    
+            // 添加随机等待，模拟人类检查按钮状态
+            await randomDelay(500, 1500);
     
             const isDisabled = () => {
                 // 检查多种禁用状态
@@ -541,7 +590,7 @@
                 }
                 // Arena.ai 使用 disabled 属性或 opacity/pointer-events 类
                 if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
-                    return sendButton.hasAttribute('disabled') || 
+                    return sendButton.hasAttribute('disabled') ||
                            sendButton.classList.contains('opacity-50') ||
                            sendButton.classList.contains('pointer-events-none');
                 }
@@ -552,22 +601,25 @@
                 if (!isDisabled()) {
                     break;
                 }
-                console.log('⚠️ 发送按钮被禁用，等待1秒后重试... (' + (attempt + 1) + '/10)');
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // 随机等待时间
+                const waitTime = randomChoice([500, 800, 1200, 1500]);
+                console.log(`⚠️ 发送按钮被禁用，等待 ${waitTime}ms 后重试... (${attempt + 1}/10)`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
             }
     
             if (isDisabled()) {
                 console.warn('⚠️ 发送按钮持续被禁用，尝试强制启用...');
-                
+                await randomDelay(200, 500);
+    
                 // 尝试强制移除禁用状态（Arena.ai）
                 if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
                     sendButton.removeAttribute('disabled');
                     sendButton.classList.remove('opacity-50', 'pointer-events-none');
                     sendButton.style.opacity = '1';
                     sendButton.style.pointerEvents = 'auto';
-                    
-                    await delay(200);
-                    
+    
+                    await randomDelay(200, 500);
+    
                     if (!isDisabled()) {
                         console.log('✅ 已强制启用发送按钮');
                     }
@@ -578,7 +630,11 @@
                 }
             }
     
+            // 随机延迟后点击
+            await randomDelay(300, 800);
+    
             if (sendButton.id === 'yuanbao-send-btn' && sendButton.tagName.toLowerCase() === 'a') {
+                // 元宝特殊处理：添加鼠标事件
                 const event = new MouseEvent('click', {
                     bubbles: true,
                     cancelable: true,
@@ -587,8 +643,17 @@
                 sendButton.dispatchEvent(event);
                 console.log('📤 元宝发送按钮已触发点击事件');
             } else {
-                // 默认点击行为
-                sendButton.click();
+                // 默认点击行为：添加鼠标移动模拟
+                const event = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: Math.random() * window.innerWidth,
+                    clientY: Math.random() * window.innerHeight,
+                    screenX: Math.random() * window.innerWidth,
+                    screenY: Math.random() * window.innerHeight
+                });
+                sendButton.dispatchEvent(event);
                 console.log('📤 发送按钮已点击');
             }
         }
@@ -828,7 +893,7 @@
             this.observer = null;
     
             // Start init but don't block constructor
-            this.init().catch(e => {
+            this.init().catch(async (e) => {
                 console.error('❌ [ERROR] Init failed:', e);
             });
         }
@@ -871,11 +936,14 @@
     
         async initDOMListeners() {
             console.log('🔍 初始化DOM监听器...');
+            // 添加随机等待，模拟页面加载过程
+            await randomDelay(500, 2000);
             await this.domManager.waitForElement(CONFIG.selectors.pageReadyIndicator);
             console.log('✅ 页面已就绪:', CONFIG.selectors.pageReadyIndicator);
     
             // 设置MutationObserver监听消息变化
             console.log('🔧 设置MutationObserver监听消息变化');
+            await randomDelay(300, 800);
             this.domManager.setupMessageObserver();
     
             console.log('🔍 DOM监听器初始化完成');
@@ -972,14 +1040,15 @@
                 await this.domManager.fillInputBox(inputBox, combinedContent);
     
                 // 点击发送按钮前等待
-                await delay(1000);
+                await randomDelay(500, 2000);
     
                 // 点击发送按钮
                 console.log('🖱️ 点击发送按钮');
                 await this.domManager.clickSendButton();
     
-                // 等待AI响应
+                // 等待AI响应（添加随机性）
                 console.log('⏳ 等待AI响应...');
+                await randomDelay(500, 1500);
                 const response = await this.domManager.waitForAIResponse(baselineContent);
     
                 if (response) {

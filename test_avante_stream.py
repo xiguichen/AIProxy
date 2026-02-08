@@ -138,13 +138,18 @@ class AvanteStreamTester:
             error_body = e.read().decode("utf-8")
             print(f"\n[X] HTTP Error {e.code}: {e.reason}")
             print(f"Response: {error_body}")
-            return {"error": str(e)}, None
+            try:
+                error_data = json.loads(error_body)
+                return error_data, None
+            except:
+                return {"error": str(e)}, None
         except urllib.error.URLError as e:
             print(f"\n[X] Connection Error: {e.reason}")
             print("Make sure the backend server is running: python backend/main.py")
             sys.exit(1)
 
         if stream:
+            # Don't read all at once, let it stream
             return self._parse_stream(response), None
         else:
             response_body = json.loads(response.read().decode("utf-8"))
@@ -154,20 +159,38 @@ class AvanteStreamTester:
         """Parse SSE stream and yield events."""
         buffer = ""
         for line in response:
+            # line is already bytes from generator
+            if isinstance(line, int):
+                # When iterating bytes, we get integers
+                line = bytes([line])
             line = line.decode("utf-8")
             buffer += line
 
-            if line.startswith("data: "):
-                data = line[6:].strip()
-                if data == "[DONE]":
-                    yield "stream_complete"
-                    break
-                elif data:
-                    try:
-                        chunk = json.loads(data)
-                        yield json.dumps(chunk)
-                    except json.JSONDecodeError:
-                        yield f"parse_error: {data}"
+            # SSE events are separated by blank lines (\n\n)
+            if line == "\n" or line == "\r\n":
+                if buffer.startswith("data: "):
+                    data = buffer[6:].strip()
+                    if data == "[DONE]":
+                        yield "stream_complete"
+                    elif data:
+                        try:
+                            chunk = json.loads(data)
+                            yield json.dumps(chunk)
+                        except json.JSONDecodeError:
+                            yield f"parse_error: {data}"
+                buffer = ""
+
+        # Handle any remaining data in buffer (in case response doesn't end with blank line)
+        if buffer.startswith("data: "):
+            data = buffer[6:].strip()
+            if data == "[DONE]":
+                yield "stream_complete"
+            elif data:
+                try:
+                    chunk = json.loads(data)
+                    yield json.dumps(chunk)
+                except json.JSONDecodeError:
+                    yield f"parse_error: {data}"
 
     def print_response(self, response: dict, stream: bool = False):
         """Print response in a formatted way."""
@@ -324,6 +347,10 @@ def test_streaming_request(tester: AvanteStreamTester):
 
     if response and "error" in response:
         print(f"[X] Connection error during stream: {response['error']}")
+        return response
+
+    if events is None:
+        print("[X] Events is None, cannot process stream")
         return response
 
     result = tester.print_stream_events(events)
