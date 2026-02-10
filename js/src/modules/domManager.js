@@ -217,59 +217,332 @@ export class DOMManager {
         }
     }
 
-    async waitForAIResponse(baselineContent = null) {
-        const startTime = Date.now();
-        const baseline = baselineContent || this.getLatestMessage();
-        console.log('🔍 waitForAIResponse: 基准内容:', baseline?.substring(0, 30));
+    /**
+     * Extract clean text from an AI message element for Arena.ai.
+     *
+     * Arena.ai renders the AI response as rich HTML: paragraphs, code blocks
+     * with syntax highlighting, lists, etc. The XML markers like <content>,
+     * </content>, <tool_calls>, <response_done> are HTML-escaped in the source
+     * as &lt;content&gt; etc., so they appear as literal text in textContent.
+     *
+     * The problem with using plain textContent is that code block UI chrome
+     * (language labels like "text", copy button text, SVG content) gets mixed
+     * into the extracted text.
+     *
+     * This method walks the DOM tree, skipping UI chrome elements, and extracts
+     * only the actual content text.
+     *
+     * @param {Element} element - The .prose message container element
+     * @returns {string} Clean extracted text with XML markers preserved
+     */
+    _extractArenaMessage(element) {
+        if (!element) return '';
+        return this._walkArenaNodes(element).trim();
+    }
 
-        while (Date.now() - startTime < CONFIG.timeouts.responseWait) {
-            await delay(1000);
+    /**
+     * Recursively walk Arena.ai DOM nodes extracting only content text.
+     * Skips code block chrome (language labels, copy buttons, SVGs).
+     *
+     * Arena.ai code block structure:
+     *   <pre>
+     *     <div data-code-block="true" class="not-prose ...">
+     *       <div class="border-border ...">   ← header with language label + copy button (SKIP)
+     *       <div class="code-block_container...">
+     *         <pre class="shiki ...">
+     *           <code>
+     *             <span class="line"><span>code text</span></span>
+     *             ...
+     *
+     * @param {Node} node
+     * @returns {string}
+     */
+    _walkArenaNodes(node) {
+        let result = '';
 
-            const latestMessage = this.getLatestMessage();
-            const hasChanged = latestMessage !== baseline &&
-                              (baseline === null || !latestMessage?.includes(baseline) || !baseline?.includes(latestMessage));
-            console.log(`🔍 检查: 最新内容=${latestMessage?.substring(0, 30)}, 变化=${hasChanged}`);
+        for (const child of node.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                result += child.textContent;
+                continue;
+            }
 
-            if (latestMessage && latestMessage.length > 0 && latestMessage !== baseline) {
-                await delay(2000);
-                const stableMessage = this.getLatestMessage();
+            if (child.nodeType !== Node.ELEMENT_NODE) {
+                continue;
+            }
 
-                if (stableMessage && stableMessage.includes('<response_done>')) {
-                    const contentStart = stableMessage.indexOf('<content>') + '<content>'.length;
-                    const contentEnd = stableMessage.indexOf('</content>');
-                    const toolCallsStart = stableMessage.indexOf('<tool_calls>');
-                    const toolCallsEnd = stableMessage.indexOf('</tool_calls>');
+            const el = child;
+            const tagName = el.tagName.toLowerCase();
 
-                    let finalContent = '';
-                    let toolCalls = null;
+            // Skip SVGs entirely — they contain no useful text
+            if (tagName === 'svg') {
+                continue;
+            }
 
-                    if (contentStart > -1 && contentEnd > -1) {
-                        finalContent = stableMessage.substring(contentStart, contentEnd).trim();
-                    } else {
-                        finalContent = stableMessage.split('<response_done>')[0].trim();
-                    }
+            // Skip button elements (copy buttons in code blocks)
+            if (tagName === 'button') {
+                continue;
+            }
 
-                    if (toolCallsStart > -1 && toolCallsEnd > -1) {
-                        const toolCallsJson = stableMessage.substring(toolCallsStart + '<tool_calls>'.length, toolCallsEnd).trim();
-                        try {
-                            toolCalls = JSON.parse(toolCallsJson);
-                        } catch (e) {
-                            console.warn('⚠️ 解析tool_calls失败:', e);
+            // Handle code block wrapper: <div data-code-block="true">
+            if (el.hasAttribute('data-code-block')) {
+                // Find the actual code content, skip the header bar
+                const codeContainer = el.querySelector('.code-block_container__lbMX4') ||
+                                      el.querySelector('[class*="code-block_container"]');
+                if (codeContainer) {
+                    const codeEl = codeContainer.querySelector('code');
+                    if (codeEl) {
+                        // Extract code lines from <span class="line"> elements
+                        const lines = codeEl.querySelectorAll('.line');
+                        if (lines.length > 0) {
+                            const codeLines = [];
+                            for (const line of lines) {
+                                codeLines.push(line.textContent);
+                            }
+                            result += codeLines.join('\n');
+                        } else {
+                            result += codeEl.textContent;
                         }
+                    } else {
+                        result += codeContainer.textContent;
                     }
-
-                    console.log('🤖 收到AI回复（XML格式），内容长度:', finalContent.length, 'tool_calls:', toolCalls ? toolCalls.length : 0);
-                    return { content: finalContent, tool_calls: toolCalls };
+                } else {
+                    // Fallback: try to find code element directly
+                    const codeEl = el.querySelector('code');
+                    if (codeEl) {
+                        result += codeEl.textContent;
+                    }
                 }
+                result += '\n';
+                continue;
+            }
 
-                if (stableMessage && stableMessage.length > 0 && stableMessage !== baseline) {
-                    console.log('🤖 收到AI回复，长度:', stableMessage.length, '内容:', stableMessage.substring(0, 50));
-                    return { content: stableMessage, tool_calls: null };
+            // Handle the code block header bar (language label + buttons) — skip it
+            if (el.classList.contains('border-border') &&
+                el.classList.contains('flex') &&
+                el.classList.contains('items-center') &&
+                el.classList.contains('justify-between')) {
+                continue;
+            }
+
+            // Handle <pre> — may contain a code block div or just preformatted text
+            if (tagName === 'pre') {
+                const codeBlockDiv = el.querySelector('[data-code-block]');
+                if (codeBlockDiv) {
+                    result += this._walkArenaNodes(el);
+                } else {
+                    result += el.textContent + '\n';
+                }
+                continue;
+            }
+
+            // Handle <br> as newline
+            if (tagName === 'br') {
+                result += '\n';
+                continue;
+            }
+
+            // Handle block elements — add newline after
+            if (tagName === 'p' || tagName === 'div') {
+                const inner = this._walkArenaNodes(el);
+                if (inner.length > 0) {
+                    result += inner;
+                    if (!inner.endsWith('\n')) {
+                        result += '\n';
+                    }
+                }
+                continue;
+            }
+
+            // Handle list items
+            if (tagName === 'li') {
+                const inner = this._walkArenaNodes(el);
+                result += inner;
+                if (!inner.endsWith('\n')) {
+                    result += '\n';
+                }
+                continue;
+            }
+
+            // Handle list containers
+            if (tagName === 'ul' || tagName === 'ol') {
+                result += this._walkArenaNodes(el);
+                continue;
+            }
+
+            // Handle inline code
+            if (tagName === 'code') {
+                result += el.textContent;
+                continue;
+            }
+
+            // All other inline elements (span, strong, em, a, etc.) — recurse
+            result += this._walkArenaNodes(el);
+        }
+
+        return result;
+    }
+
+    /**
+     * Parse XML-formatted AI response to extract content and tool_calls.
+     * The XML markers are literal text (decoded from &lt;/&gt; HTML entities).
+     * @param {string} message - The raw message text
+     * @returns {{content: string, tool_calls: Array|null}} Parsed response
+     */
+    _parseXmlResponse(message) {
+        if (!message) {
+            return { content: '', tool_calls: null };
+        }
+
+        let finalContent = '';
+        let toolCalls = null;
+
+        // Extract <content>...</content>
+        const contentStartTag = '<content>';
+        const contentEndTag = '</content>';
+        const contentStartIdx = message.indexOf(contentStartTag);
+        const contentEndIdx = message.indexOf(contentEndTag);
+
+        if (contentStartIdx !== -1 && contentEndIdx !== -1 && contentEndIdx > contentStartIdx) {
+            finalContent = message.substring(
+                contentStartIdx + contentStartTag.length,
+                contentEndIdx
+            ).trim();
+        } else {
+            // No valid content tags — use everything before <response_done>
+            const responseDoneIdx = message.indexOf('<response_done>');
+            if (responseDoneIdx !== -1) {
+                finalContent = message.substring(0, responseDoneIdx).trim();
+            } else {
+                finalContent = message.trim();
+            }
+        }
+
+        // Extract <tool_calls>...</tool_calls>
+        const toolCallsStartTag = '<tool_calls>';
+        const toolCallsEndTag = '</tool_calls>';
+        const toolCallsStartIdx = message.indexOf(toolCallsStartTag);
+        const toolCallsEndIdx = message.indexOf(toolCallsEndTag);
+
+        if (toolCallsStartIdx !== -1 && toolCallsEndIdx !== -1 && toolCallsEndIdx > toolCallsStartIdx) {
+            const toolCallsJson = message.substring(
+                toolCallsStartIdx + toolCallsStartTag.length,
+                toolCallsEndIdx
+            ).trim();
+
+            if (toolCallsJson.length > 0) {
+                try {
+                    toolCalls = JSON.parse(toolCallsJson);
+                    console.log('🔧 解析到tool_calls:', toolCalls.length, '个');
+                } catch (e) {
+                    console.warn('⚠️ 解析tool_calls JSON失败:', e.message,
+                                'raw:', toolCallsJson.substring(0, 100));
                 }
             }
         }
 
-        throw new Error('等待AI响应超时');
+        return { content: finalContent, tool_calls: toolCalls };
+    }
+
+    async waitForAIResponse(baselineContent = null) {
+        const startTime = Date.now();
+        const baseline = baselineContent || this.getLatestMessage();
+        console.log('🔍 waitForAIResponse: 基准内容:', baseline?.substring(0, 50));
+
+        // Track consecutive stable checks to ensure response is truly complete
+        let lastContent = null;
+        let stableCount = 0;
+        const REQUIRED_STABLE_CHECKS = 3;
+        const POLL_INTERVAL = 1500;
+
+        // Once we detect the AI has started responding (content changed from baseline),
+        // we set a per-activity deadline. Every time content changes, the deadline
+        // resets to now + 60 seconds. This ensures long AI responses aren't cut short.
+        const ACTIVITY_TIMEOUT = 60000; // 1 minute after last content change
+        let lastChangeTime = null;  // null = AI hasn't started responding yet
+        let aiStartedResponding = false;
+
+        while (true) {
+            const now = Date.now();
+
+            // Check overall timeout (CONFIG.timeouts.responseWait from start)
+            if (now - startTime > CONFIG.timeouts.responseWait) {
+                // If AI has been responding, return what we have
+                if (aiStartedResponding && lastContent) {
+                    console.warn('⚠️ 全局超时，返回已收到的内容，长度:', lastContent.length);
+                    const parsed = this._parseXmlResponse(lastContent);
+                    if (parsed.content.length > 0) {
+                        return parsed;
+                    }
+                    return { content: lastContent, tool_calls: null };
+                }
+                throw new Error('等待AI响应超时');
+            }
+
+            // Check per-activity timeout: if AI started but hasn't produced new
+            // content for 1 minute, consider it done
+            if (aiStartedResponding && lastChangeTime !== null) {
+                const timeSinceLastChange = now - lastChangeTime;
+                if (timeSinceLastChange > ACTIVITY_TIMEOUT && stableCount >= REQUIRED_STABLE_CHECKS) {
+                    console.log('⏰ AI已停止输出超过60秒，返回已收到的内容，长度:', lastContent.length);
+                    const parsed = this._parseXmlResponse(lastContent);
+                    if (parsed.content.length > 0) {
+                        return parsed;
+                    }
+                    return { content: lastContent, tool_calls: null };
+                }
+            }
+
+            await delay(POLL_INTERVAL);
+
+            const latestMessage = this.getLatestMessage();
+
+            // Check if content has changed from baseline
+            const hasChanged = latestMessage !== null &&
+                              latestMessage.length > 0 &&
+                              latestMessage !== baseline;
+
+            console.log(`🔍 检查: 长度=${latestMessage?.length || 0}, 变化=${hasChanged}, 稳定=${stableCount}, ` +
+                        `已开始=${aiStartedResponding}, 距上次变化=${lastChangeTime ? Math.round((Date.now() - lastChangeTime) / 1000) + 's' : 'N/A'}`);
+
+            if (!hasChanged) {
+                // No change from baseline yet — AI hasn't started responding
+                stableCount = 0;
+                lastContent = null;
+                continue;
+            }
+
+            // AI has started responding (content differs from baseline)
+            if (!aiStartedResponding) {
+                aiStartedResponding = true;
+                lastChangeTime = Date.now();
+                console.log('🟢 检测到AI开始响应');
+            }
+
+            // Check for <response_done> marker — definitive completion signal
+            if (latestMessage.includes('<response_done>')) {
+                // Found completion marker — wait a moment for final rendering
+                await delay(1500);
+                const finalMessage = this.getLatestMessage();
+
+                const parsed = this._parseXmlResponse(finalMessage);
+                console.log('🤖 收到AI回复（XML格式），内容长度:', parsed.content.length,
+                            'tool_calls:', parsed.tool_calls ? parsed.tool_calls.length : 0);
+                return parsed;
+            }
+
+            // No response_done yet — track stability
+            if (latestMessage === lastContent) {
+                stableCount++;
+                console.log(`🔍 内容未变化，稳定计数: ${stableCount}/${REQUIRED_STABLE_CHECKS}`);
+                // Don't return yet — wait for activity timeout or response_done
+            } else {
+                // Content changed — reset stability counter and update deadline
+                stableCount = 0;
+                lastChangeTime = Date.now();
+                console.log('🔄 内容变化，重置活动计时器');
+            }
+            lastContent = latestMessage;
+        }
     }
 
     getMessageCount() {
@@ -379,7 +652,8 @@ export class DOMManager {
             }
 
             console.log('🤖 Arena.ai 最新AI消息已找到');
-            return latestAIMessage.textContent.trim();
+            // Use specialized Arena extractor to skip code block UI chrome
+            return this._extractArenaMessage(latestAIMessage);
         }
 
         // 检查是否是元宝的消息容器

@@ -1,3 +1,5 @@
+# Encoding: UTF-8 (Please verify if needed)
+
 import logging
 from contextlib import asynccontextmanager
 import os
@@ -314,7 +316,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await connection_manager.disconnect(client_id)
 
 # OpenAI API端点
-@app.post("/v1/chat/completions", response_model=OpenAIResponse)
+@app.post("/v1/chat/completions")
 async def create_chat_completion(request: OpenAIRequest):
     """
     OpenAI补全API端点，接收请求并转发到客户端
@@ -484,6 +486,32 @@ IMPORTANT:
         prompt_tokens = _estimate_tokens(prompt_text)
         completion_tokens = _estimate_tokens(content)
 
+        # Normalize tool_calls to OpenAI format
+        formatted_tool_calls = None
+        if tool_calls:
+            formatted_tool_calls = []
+            for i, tc in enumerate(tool_calls):
+                tc_id = tc.get("id", f"call_{request_id[:8]}_{i}")
+                tc_type = tc.get("type", "function")
+                tc_function = tc.get("function", tc)
+                func_name = tc_function.get("name", tc.get("name", ""))
+                func_args = tc_function.get("arguments", tc.get("arguments", {}))
+                if isinstance(func_args, dict):
+                    func_args = json.dumps(func_args, ensure_ascii=False)
+                elif not isinstance(func_args, str):
+                    func_args = json.dumps(func_args, ensure_ascii=False)
+                formatted_tool_calls.append({
+                    "id": tc_id,
+                    "type": tc_type,
+                    "function": {
+                        "name": func_name,
+                        "arguments": func_args
+                    }
+                })
+
+        # Determine finish_reason
+        finish_reason = "tool_calls" if formatted_tool_calls else response_data.get("finish_reason", "stop")
+
         openai_response = {
             "id": f"chatcmpl-{request_id}",
             "object": "chat.completion",
@@ -494,9 +522,9 @@ IMPORTANT:
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": content
+                        "content": content if not formatted_tool_calls else (content if content else None)
                     },
-                    "finish_reason": response_data.get("finish_reason", "stop")
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
@@ -506,57 +534,12 @@ IMPORTANT:
             }
         }
 
-        if tool_calls:
-            logger.info(f"请求 {request_id} 包含工具调用: {json.dumps(tool_calls, ensure_ascii=False, indent=2)}")
-            save_debug_file(f"{request_id}_tool_calls.json", tool_calls)
-            openai_response["choices"][0]["message"]["tool_calls"] = tool_calls
-            openai_response["choices"][0]["finish_reason"] = "tool_calls"
+        if formatted_tool_calls:
+            logger.info(f"请求 {request_id} 包含工具调用: {json.dumps(formatted_tool_calls, ensure_ascii=False, indent=2)}")
+            save_debug_file(f"{request_id}_tool_calls.json", formatted_tool_calls)
+            openai_response["choices"][0]["message"]["tool_calls"] = formatted_tool_calls
 
         save_debug_file(f"{request_id}_openai_response.json", openai_response)
-
-        # 检查是否需要构建tool_calls响应（当用户提示使用工具但AIReturn普通text时）
-        # 检测 messages 中是否有 system-reminder 提示使用工具
-        has_tool_hint = any(
-            hasattr(msg, 'role') and msg.role == "user" and hasattr(msg, 'content') and "system-reminder" in (msg.content or "")
-            for msg in request.messages
-        )
-
-        if has_tool_hint and content:
-            # 构建包含 tool_calls 的响应（模拟工具调用）
-            openai_response_with_tools = {
-                "id": f"chatcmpl-{request_id}",
-                "object": "chat.completion",
-                "created": int(datetime.now().timestamp()),
-                "model": request.model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": content,
-                            "tool_calls": [
-                                {
-                                    "id": f"call_{request_id[:8]}",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "attempt_completion",
-                                        "arguments": f'{{"result": "{content[:100]}..."}}'
-                                    }
-                                }
-                            ]
-                        },
-                        "finish_reason": "tool_calls"
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens
-                }
-            }
-            logger.info(f"请求 {request_id} 转换为工具调用格式")
-            save_debug_file(f"{request_id}_openai_response_with_tools.json", openai_response_with_tools)
-            return openai_response_with_tools
 
         logger.info(f"请求 {request_id} 处理完成，响应长度: {len(content)} 字符")
 
@@ -566,7 +549,7 @@ IMPORTANT:
                 chunk_id = f"chatcmpl-{request_id}"
                 created = int(datetime.now().timestamp())
 
-                # 发送角色定义
+                # 发送角色定义（含空content，与OpenAI格式一致）
                 role_chunk = {
                     "id": chunk_id,
                     "object": "chat.completion.chunk",
@@ -575,7 +558,7 @@ IMPORTANT:
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {"role": "assistant"},
+                            "delta": {"role": "assistant", "content": ""},
                             "finish_reason": None
                         }
                     ]
@@ -583,9 +566,9 @@ IMPORTANT:
                 yield f"data: {json.dumps(role_chunk, ensure_ascii=False)}\n\n"
 
                 # 分块发送内容（模拟流式）
-                content_chunk_size = 10  # 每块10个字符
+                content_chunk_size = 20  # 每块20个字符
                 for i in range(0, len(content), content_chunk_size):
-                    chunk = content[i:i + content_chunk_size]
+                    chunk_text = content[i:i + content_chunk_size]
                     content_chunk = {
                         "id": chunk_id,
                         "object": "chat.completion.chunk",
@@ -594,15 +577,71 @@ IMPORTANT:
                         "choices": [
                             {
                                 "index": 0,
-                                "delta": {"content": chunk},
+                                "delta": {"content": chunk_text},
                                 "finish_reason": None
                             }
                         ]
                     }
                     yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
 
-                # 发送完成标记
-                finish_chunk = {
+                # 如果有工具调用，发送工具调用块（遵循OpenAI流式格式）
+                if formatted_tool_calls:
+                    for tc_index, tc in enumerate(formatted_tool_calls):
+                        # 第一个块：发送函数名称和ID
+                        tool_call_start = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": request.model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": tc_index,
+                                                "id": tc["id"],
+                                                "type": tc["type"],
+                                                "function": {
+                                                    "name": tc["function"]["name"],
+                                                    "arguments": ""
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "finish_reason": None
+                                }
+                            ]
+                        }
+                        yield f"data: {json.dumps(tool_call_start, ensure_ascii=False)}\n\n"
+
+                        # 第二个块：发送参数
+                        tool_call_args = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": request.model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": tc_index,
+                                                "function": {
+                                                    "arguments": tc["function"]["arguments"]
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "finish_reason": None
+                                }
+                            ]
+                        }
+                        yield f"data: {json.dumps(tool_call_args, ensure_ascii=False)}\n\n"
+
+                # 发送最终完成标记
+                final_chunk = {
                     "id": chunk_id,
                     "object": "chat.completion.chunk",
                     "created": created,
@@ -611,65 +650,30 @@ IMPORTANT:
                         {
                             "index": 0,
                             "delta": {},
-                            "finish_reason": "stop"
+                            "finish_reason": finish_reason
                         }
-                    ]
+                    ],
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens
+                    }
                 }
-                yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
-
-                # 如果有工具调用提示，发送工具调用块
-                has_tool_hint = any(
-                    msg.get("role") == "user" and "system-reminder" in msg.get("content", "")
-                    for msg in request.messages
-                )
-                if has_tool_hint:
-                    tool_call_chunk = {
-                        "id": chunk_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": request.model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {
-                                    "tool_calls": [
-                                        {
-                                            "id": f"call_{request_id[:8]}",
-                                            "type": "function",
-                                            "function": {
-                                                "name": "attempt_completion",
-                                                "arguments": "{}"
-                                            }
-                                        }
-                                    ]
-                                },
-                                "finish_reason": None
-                            }
-                        ]
-                    }
-                    yield f"data: {json.dumps(tool_call_chunk, ensure_ascii=False)}\n\n"
-                    
-                    # 发送工具调用完成
-                    tool_finish_chunk = {
-                        "id": chunk_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": request.model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {},
-                                "finish_reason": "tool_calls"
-                            }
-                        ]
-                    }
-                    yield f"data: {json.dumps(tool_finish_chunk, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
 
                 yield "data: [DONE]\n\n"
 
-            return StreamingResponse(generate_stream(), media_type="text/event-stream")
+            return StreamingResponse(
+                generate_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                }
+            )
 
-        return openai_response
+        return JSONResponse(content=openai_response)
 
     except TimeoutError as e:
         logger.error(f"Request timeout: {request_id} - {str(e)}")

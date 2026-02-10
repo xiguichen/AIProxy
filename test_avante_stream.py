@@ -25,6 +25,7 @@ from typing import Generator, Optional
 
 API_BASE = "http://localhost:8000"
 DEFAULT_MODEL = "your-model-name"
+DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant. Answer the user's questions clearly and concisely."
 
 
 class AvanteStreamTester:
@@ -41,15 +42,17 @@ class AvanteStreamTester:
         system_prompt: Optional[str] = None,
     ) -> dict:
         """Create a request body matching avante.nvim format."""
+        # Always include system prompt to ensure JS client receives proper format
+        effective_system_prompt = system_prompt if system_prompt else DEFAULT_SYSTEM_PROMPT
+
         messages = []
 
-        if system_prompt:
-            messages.append({
-                "role": "system",
-                "content": system_prompt,
-                "tool_calls": None,
-                "tool_call_id": None
-            })
+        messages.append({
+            "role": "system",
+            "content": effective_system_prompt,
+            "tool_calls": None,
+            "tool_call_id": None
+        })
 
         messages.append({
             "role": "user",
