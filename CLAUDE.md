@@ -232,6 +232,56 @@ python test_avante_stream.py --stream
 python test_avante_stream.py --health
 ```
 
+## File Combining Tools
+
+Two utilities are available for combining source code and documentation:
+
+### `combine_all.py` - Enhanced One-Command Combining
+
+**Recommended for**: Complete project documentation, backups, and code sharing
+
+Use this script for rapid, one-command generation of comprehensive project bundles:
+
+```bash
+# Combine everything (default)
+python combine_all.py --output all_files.txt
+
+# Combine only documentation
+python combine_all.py --output docs.txt --categories docs
+
+# Combine only Python and JavaScript sources
+python combine_all.py --output sources.txt --categories py --categories js
+
+# Combine documentation, Python, JS, and tests
+python combine_all.py --output complete.txt --categories docs --categories py --categories js --categories tests
+```
+
+**Features**:
+- 5 predefined categories: docs, py, js, tests, config
+- Automatic file discovery and organization
+- Category-based prioritization
+- Clear output with headers and progress tracking
+- Creates 600KB+ comprehensive bundles (31 files by default)
+
+**Documentation**: See `COMBINE_ALL.md` for detailed usage instructions.
+
+### `combine_files.py` - Low-Level File Combining
+
+**Recommended for**: Custom glob patterns and fine-grained control
+
+Use this script when you need custom file matching patterns:
+
+```bash
+python combine_files.py --pattern "**/*.py" --output python_files.txt
+python combine_files.py --pattern "*.md" --output all_markdown.md
+```
+
+**Features**:
+- Custom glob pattern matching
+- Manual file selection and ordering
+- Binary file detection
+- No predefined categories
+
 ## Critical Rules
 
 1. **Never edit js/main.js directly**: Always edit source modules in `js/src/modules/` and rebuild
