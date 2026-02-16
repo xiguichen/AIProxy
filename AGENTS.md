@@ -215,6 +215,56 @@ python test_avante_stream.py --all
 - Test with custom prompts and models
 - Run comprehensive test suite for backend validation
 
+## File Combining Tools
+
+Two utilities are available for combining source code and documentation:
+
+### `combine_all.py` - Enhanced One-Command Combining
+
+**Recommended for**: Complete project documentation, backups, and code sharing
+
+Use this script for rapid, one-command generation of comprehensive project bundles:
+
+```bash
+# Combine everything (default)
+python combine_all.py --output all_files.txt
+
+# Combine only documentation
+python combine_all.py --output docs.txt --categories docs
+
+# Combine only Python and JavaScript sources
+python combine_all.py --output sources.txt --categories py --categories js
+
+# Combine documentation, Python, JS, and tests
+python combine_all.py --output complete.txt --categories docs --categories py --categories js --categories tests
+```
+
+**Features**:
+- 5 predefined categories: docs, py, js, tests, config
+- Automatic file discovery and organization
+- Category-based prioritization
+- Clear output with headers and progress tracking
+- Creates 600KB+ comprehensive bundles (31 files by default)
+
+**Documentation**: See `COMBINE_ALL.md` for detailed usage instructions.
+
+### `combine_files.py` - Low-Level File Combining
+
+**Recommended for**: Custom glob patterns and fine-grained control
+
+Use this script when you need custom file matching patterns:
+
+```bash
+python combine_files.py --pattern "**/*.py" --output python_files.txt
+python combine_files.py --pattern "*.md" --output all_markdown.md
+```
+
+**Features**:
+- Custom glob pattern matching
+- Manual file selection and ordering
+- Binary file detection
+- No predefined categories
+
 ## Code Style Guidelines
 
 ### Python (Backend)
@@ -324,6 +374,19 @@ except Exception as e:
 - **ConnectionManager**: Central hub for WebSocket client state and routing
 - **Request/Response Matching**: Uses `request_id` to correlate HTTP requests with WebSocket responses
 - **Heartbeat System**: 25s interval, 30s timeout for client health checks
+- **Per-client caching**: `system_prompt_hash` and `tools_hash` to reduce redundant data transfer
+
+#### Request Flow
+
+1. HTTP POST `/v1/chat/completions` creates OpenAI-compatible request
+2. Validates messages and generates unique `request_id`
+3. Checks system prompt and tools hashes to determine if they've changed
+4. Adds XML response format requirements to system messages if not present
+5. Routes request to available idle client via `get_available_client()`
+6. Marks client as BUSY, waits for response via `send_completion_request()`
+7. Client responds with `completion_response` containing content (possibly with `<content>` and `<tool_calls>` tags)
+8. Backend parses XML response, extracts content and tool_calls
+9. Returns OpenAI-compatible response to HTTP client
 
 ### Frontend (main.js)
 
@@ -335,12 +398,28 @@ except Exception as e:
 
 ### HTTP → WebSocket (server → client)
 ```json
-{"type": "completion_request", "request_id": "req_...", "model": "...", "messages": [...], "temperature": 0.7}
+{
+  "type": "completion_request",
+  "request_id": "req_...",
+  "model": "...",
+  "messages": [{"role": "system|user|assistant", "content": "...", "tool_calls": [...]}],
+  "temperature": 0.7,
+  "max_tokens": null,
+  "stream": false,
+  "tools": [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
+}
 ```
 
 ### WebSocket → HTTP (client → server)
 ```json
-{"type": "completion_response", "request_id": "req_...", "content": "...", "finish_reason": "stop"}
+{
+  "type": "completion_response",
+  "request_id": "req_...",
+  "content": "...",
+  "finish_reason": "stop|tool_calls",
+  "timestamp": "ISO8601",
+  "error": null
+}
 ```
 
 ### Heartbeat
@@ -348,6 +427,23 @@ except Exception as e:
 {"type": "heartbeat"}           // server → client
 {"type": "heartbeat_response"}  // client → server
 ```
+
+### Client Registration
+```json
+{"type": "register", "client_id": "...", "metadata": {"user_agent": "...", "webpage_url": "...", "timestamp": "..."}}
+```
+
+### XML Response Format
+
+Clients must return responses in XML format:
+```xml
+<content>[Response text]</content>
+<tool_calls>[{"name": "...", "arguments": {...}}]</tool_calls>
+<reponse_done>
+```
+- `<content>` tag with main response text (required)
+- `<tool_calls>` section is OPTIONAL (only include if calling tools)
+- Must end with `<response_done>` tag
 
 ## Key Files
 
@@ -470,6 +566,15 @@ The userscript supports the following AI platforms:
 | Yuanbao (腾讯元宝) | `yuanbao.tencent.com` | ✅ Supported |
 | Other | (fallback) | ⚠️ Basic support |
 
+### Platform Special Handling
+
+| Platform | Domain | Special Handling |
+|----------|--------|------------------|
+| ChatGPT | `chat.openai.com` | Standard textarea input |
+| Claude | `claude.ai` | Standard textarea input |
+| Arena.ai | `arena.ai` | Uses flex-col-reverse, AI messages lack `justify-end` class |
+| Yuanbao (腾讯元宝) | `yuanbao.tencent.com` | `ql-editor` contenteditable, `yuanbao-send-btn`, `hyc-component-reasoner__text` |
+
 ### Platform Configuration
 
 Platform-specific CSS selectors are defined in `js/src/modules/config.js`. To add support for a new platform:
@@ -540,6 +645,8 @@ The backend implements intelligent caching to optimize performance:
 4. **Feature parity**: Refactoring must not break existing functionality
 5. **Platform-specific code is fragile**: Be extra careful with site selectors and conditional logic
 6. **Test order matters**: Always build and test JS changes before running backend tests. Wait for user confirmation that browser has been refreshed with new userscript.
+7. **Initialization code matters**: Startup logic, cleanup handlers, and global instantiation are core functionality
+8. **Debug logs**: All requests/responses saved to `debug_logs/` directory at project root
 
 ## Troubleshooting
 

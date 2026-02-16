@@ -40,12 +40,50 @@ export class AIChatForwarder {
                 await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve));
             }
             
+            // 启动fetch拦截（仅在Arena.ai）
+            this.initFetchInterceptor();
+            
             await this.start();
         } catch (error) {
             console.error('❌ 初始化失败:', error);
             this.scheduleRetry();
             throw error;
         }
+    }
+
+    initFetchInterceptor() {
+        const hostname = window.location.hostname;
+        if (!hostname.includes('arena.ai')) {
+            return;
+        }
+
+        // Skip if already intercepted
+        if (window.__aiprox_intercepted) {
+            return;
+        }
+        window.__aiprox_intercepted = true;
+        
+        const originalFetch = window.fetch;
+        
+        window.fetch = async (...args) => {
+            const url = args[0] instanceof Request ? args[0].url : args[0];
+            
+            // Only intercept streaming API requests
+            if (typeof url === 'string' && url.includes('/nextjs-api/stream/create-evaluation')) {
+                // Silently pass through without logging in production
+                try {
+                    const response = await originalFetch(...args);
+                    return response;
+                } catch (error) {
+                    throw error;
+                }
+            }
+            
+            // Pass through non-target requests
+            return originalFetch(...args);
+        };
+        
+        console.log('✅ [FETCH] Arena.ai fetch拦截器已启动');
     }
 
     async start() {
@@ -129,8 +167,10 @@ export class AIChatForwarder {
                 combinedContent += '\n\n';
             } else {
                 // 如果没有系统消息，添加默认角色说明
-                combinedContent += 'IMPORTANT: When you finish your response, you MUST end it with exactly: <response_done>\n';
-                combinedContent += 'Do not include any text after <response_done>.\n\n';
+                combinedContent += 'IMPORTANT: When you finish your response, you MUST return a valid JSON object.\n';
+                combinedContent += 'Use format: {"content": "your response", "finish_reason": "stop"}\n';
+                combinedContent += 'Or for tool calls: {"content": "", "finish_reason": "tool_calls", "tool_calls": [...]}\n';
+                combinedContent += 'You can wrap the JSON in ```json code blocks if desired.\n\n';
             }
 
             // 添加支持的工具列表（如果有）
@@ -185,16 +225,48 @@ export class AIChatForwarder {
             const response = await this.domManager.waitForAIResponse(baselineContent);
 
             if (response) {
-                const finalContent = response.content || response;
-                const toolCalls = response.tool_calls;
+                console.log('🔍 [DEBUG] response:', JSON.stringify(response).substring(0, 200));
+                
+                let finalContent = '';
+                if (response && typeof response === 'object') {
+                    if (response.content !== undefined) {
+                        finalContent = String(response.content == null ? '' : response.content);
+                    } else {
+                        finalContent = String(response);
+                    }
+                } else if (response) {
+                    finalContent = String(response);
+                }
+                
+                const toolCalls = response?.tool_calls || null;
 
-                console.log('✅ AI响应已获取:', finalContent?.substring(0, 30));
-
+                // Normalize tool_calls to OpenAI format (wrap name/arguments in function object)
+                let normalizedToolCalls = null;
                 if (toolCalls && toolCalls.length > 0) {
-                    console.log('📤 发送AI响应（含tool_calls）:', finalContent?.substring(0, 50));
-                    this.wsManager.sendCompletionResponse(requestData.request_id, finalContent, toolCalls);
+                    normalizedToolCalls = toolCalls.map((tc, index) => {
+                        if (tc.function) {
+                            // Already in OpenAI format
+                            return tc;
+                        }
+                        // Convert from {name, arguments} to {function: {name, arguments}}
+                        return {
+                            id: tc.id || `call_${Date.now()}_${index}`,
+                            type: tc.type || 'function',
+                            function: {
+                                name: tc.name || '',
+                                arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || {})
+                            }
+                        };
+                    });
+                }
+
+                console.log('✅ AI响应已获取, content长度:', finalContent.length, 'tool_calls:', normalizedToolCalls ? normalizedToolCalls.length : 0);
+
+                if (normalizedToolCalls && normalizedToolCalls.length > 0) {
+                    console.log('📤 发送AI响应（含tool_calls）');
+                    this.wsManager.sendCompletionResponse(requestData.request_id, finalContent, normalizedToolCalls);
                 } else {
-                    console.log('📤 发送AI响应:', finalContent?.substring(0, 50));
+                    console.log('📤 发送AI响应');
                     this.wsManager.sendCompletionResponse(requestData.request_id, finalContent);
                 }
             } else {

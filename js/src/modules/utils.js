@@ -1,5 +1,11 @@
 // 工具函数模块
 
+// Production mode - disable all console logs in production
+const PRODUCTION = (() => {
+    const url = typeof window !== 'undefined' ? window.location?.href : '';
+    return url.includes('arena.ai') || url.includes('claude.ai') || url.includes('chat.openai.com');
+})();
+
 let wsManager = null;
 
 export function setWsManager(manager) {
@@ -29,6 +35,10 @@ export function randomDelay(minMs, maxMs) {
 export function randomChoice(delays) {
     return delays[Math.floor(Math.random() * delays.length)];
 }
+
+// Console logging that can be disabled in production
+const noopLogger = { log: ()=>{}, debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{} };
+const activeLogger = PRODUCTION ? noopLogger : console;
 
 export function findElement(selectorsArray) {
     for (const selector of selectorsArray) {
@@ -63,7 +73,9 @@ export const LOG_LEVELS = {
 const localLogs = [];
 const MAX_LOCAL_LOGS = 100;
 
-export function log(level, category, message, data = null) {
+export function _log(level, category, message, data = null) {
+    if (PRODUCTION) return;
+    
     const timestamp = new Date().toISOString();
     const logEntry = { timestamp, level, category, message, data };
     
@@ -103,7 +115,7 @@ export function log(level, category, message, data = null) {
     }
 }
 
-export function debug(category, message, data) { return log(LOG_LEVELS.DEBUG, category, message, data); }
-export function info(category, message, data) { return log(LOG_LEVELS.INFO, category, message, data); }
-export function warn(category, message, data) { return log(LOG_LEVELS.WARN, category, message, data); }
-export function error(category, message, data) { return log(LOG_LEVELS.ERROR, category, message, data); }
+export function debug(category, message, data) { _log(LOG_LEVELS.DEBUG, category, message, data); }
+export function info(category, message, data) { _log(LOG_LEVELS.INFO, category, message, data); }
+export function warn(category, message, data) { _log(LOG_LEVELS.WARN, category, message, data); }
+export function error(category, message, data) { _log(LOG_LEVELS.ERROR, category, message, data); }

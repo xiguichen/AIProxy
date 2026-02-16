@@ -494,3 +494,316 @@ describe('DOMManager - getLatestMessage for Arena.ai', () => {
         expect(message).toBe('AI message should be returned');
     });
 });
+
+describe('DOMManager - Arena.ai JSON Code Block Parsing', () => {
+    let domManager;
+    let originalHostname;
+
+    beforeEach(() => {
+        domManager = new DOMManager();
+        originalHostname = window.location.hostname;
+        Object.defineProperty(window, 'location', {
+            value: { hostname: 'arena.ai' },
+            writable: true
+        });
+    });
+
+    afterEach(() => {
+        Object.defineProperty(window, 'location', {
+            value: { hostname: originalHostname },
+            writable: true
+        });
+    });
+
+    test('_extractJsonFromArenaMessage should parse JSON code block correctly', () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="chat-area">
+                    <ol class="mt-8 flex flex-col-reverse">
+                        <div class="mx-auto max-w-[800px] px-4 w-full">
+                            <div class="prose">
+                                <div class="not-prose my-0 flex w-full flex-col overflow-clip border border-border text-text-primary rounded-lg not-prose relative" data-code-block="true">
+                                    <div class="border-border flex items-center justify-between border-b px-4 py-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-text-secondary text-sm font-medium">JSON</span>
+                                        </div>
+                                    </div>
+                                    <div class="code-block_container__lbMX4">
+                                        <pre class="shiki github-light shiki-code-block">
+                                            <code class="whitespace-pre-wrap break-words">
+                                                <span class="line"><span style="color:#24292E">{</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "id"</span><span style="color:#24292E">: </span><span style="color:#032F62">"chatcmpl-abc123"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "object"</span><span style="color:#24292E">: </span><span style="color:#032F62">"chat.completion"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "model"</span><span style="color:#24292E">: </span><span style="color:#032F62">"gpt-4"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "choices"</span><span style="color:#24292E">: [</span></span>
+                                                <span class="line"><span style="color:#24292E">    {</span></span>
+                                                <span class="line"><span style="color:#005CC5">      "finish_reason"</span><span style="color:#24292E">: </span><span style="color:#032F62">"tool_calls"</span></span>
+                                                <span class="line"><span style="color:#24292E">    }</span></span>
+                                                <span class="line"><span style="color:#24292E">  ]</span></span>
+                                                <span class="line"><span style="color:#24292E">}</span></span>
+                                            </code>
+                                        </pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </ol>
+                </div>
+            </main>
+        `;
+
+        const proseElement = document.querySelector('.prose');
+        const result = domManager._extractJsonFromArenaMessage(proseElement);
+
+        expect(result).not.toBeNull();
+        expect(result.id).toBe('chatcmpl-abc123');
+        expect(result.object).toBe('chat.completion');
+        expect(result.model).toBe('gpt-4');
+        expect(result.choices).toHaveLength(1);
+        expect(result.choices[0].finish_reason).toBe('tool_calls');
+    });
+
+    test('_extractJsonFromArenaMessage should extract tool_calls with nested JSON arguments', () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="chat-area">
+                    <ol class="mt-8 flex flex-col-reverse">
+                        <div class="mx-auto max-w-[800px] px-4 w-full">
+                            <div class="prose">
+                                <div class="not-prose my-0 flex w-full flex-col overflow-clip border border-border text-text-primary rounded-lg not-prose relative" data-code-block="true">
+                                    <div class="border-border flex items-center justify-between border-b px-4 py-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-text-secondary text-sm font-medium">JSON</span>
+                                        </div>
+                                    </div>
+                                    <div class="code-block_container__lbMX4">
+                                        <pre class="shiki github-light shiki-code-block">
+                                            <code class="whitespace-pre-wrap break-words">
+                                                <span class="line"><span style="color:#24292E">{</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "content"</span><span style="color:#24292E">: </span><span style="color:#005CC5">null</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "finish_reason"</span><span style="color:#24292E">: </span><span style="color:#032F62">"tool_calls"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">  "tool_calls"</span><span style="color:#24292E">: [</span></span>
+                                                <span class="line"><span style="color:#24292E">    {</span></span>
+                                                <span class="line"><span style="color:#005CC5">      "id"</span><span style="color:#24292E">: </span><span style="color:#032F62">"call_001"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">      "type"</span><span style="color:#24292E">: </span><span style="color:#032F62">"function"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">      "function"</span><span style="color:#24292E">: {</span></span>
+                                                <span class="line"><span style="color:#005CC5">        "name"</span><span style="color:#24292E">: </span><span style="color:#032F62">"write_todos"</span><span style="color:#24292E">,</span></span>
+                                                <span class="line"><span style="color:#005CC5">        "arguments"</span><span style="color:#24292E">: </span><span style="color:#032F62">"{\\"todos\\":[{\\"id\\":\\"1\\",\\"content\\":\\"test\\"}]}"</span></span>
+                                                <span class="line"><span style="color:#24292E">      }</span></span>
+                                                <span class="line"><span style="color:#24292E">    }</span></span>
+                                                <span class="line"><span style="color:#24292E">  ]</span></span>
+                                                <span class="line"><span style="color:#24292E">}</span></span>
+                                            </code>
+                                        </pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </ol>
+                </div>
+            </main>
+        `;
+
+        const proseElement = document.querySelector('.prose');
+        const result = domManager._extractJsonFromArenaMessage(proseElement);
+
+        expect(result).not.toBeNull();
+        expect(result.content).toBeNull();
+        expect(result.finish_reason).toBe('tool_calls');
+        expect(result.tool_calls).toHaveLength(1);
+        expect(result.tool_calls[0].id).toBe('call_001');
+        expect(result.tool_calls[0].function.name).toBe('write_todos');
+        expect(result.tool_calls[0].function.arguments).toBe('{"todos":[{"id":"1","content":"test"}]}');
+    });
+
+    test('_extractJsonFromArenaMessage should return null when no JSON code block found', () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="chat-area">
+                    <ol class="mt-8 flex flex-col-reverse">
+                        <div class="mx-auto max-w-[800px] px-4 w-full">
+                            <div class="prose">
+                                <p>Just regular text, no code block</p>
+                            </div>
+                        </div>
+                    </ol>
+                </div>
+            </main>
+        `;
+
+        const proseElement = document.querySelector('.prose');
+        const result = domManager._extractJsonFromArenaMessage(proseElement);
+
+        expect(result).toBeNull();
+    });
+
+    test('_extractJsonFromArenaMessage should return null when code block is not JSON', () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="chat-area">
+                    <ol class="mt-8 flex flex-col-reverse">
+                        <div class="mx-auto max-w-[800px] px-4 w-full">
+                            <div class="prose">
+                                <div class="not-prose my-0 flex w-full flex-col overflow-clip border border-border text-text-primary rounded-lg not-prose relative" data-code-block="true">
+                                    <div class="border-border flex items-center justify-between border-b px-4 py-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-text-secondary text-sm font-medium">Python</span>
+                                        </div>
+                                    </div>
+                                    <div class="code-block_container__lbMX4">
+                                        <pre class="shiki">
+                                            <code>
+                                                <span class="line">print("hello world")</span>
+                                            </code>
+                                        </pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </ol>
+                </div>
+            </main>
+        `;
+
+        const proseElement = document.querySelector('.prose');
+        const result = domManager._extractJsonFromArenaMessage(proseElement);
+
+        expect(result).toBeNull();
+    });
+
+    test('_parseJsonArenaResponse should correctly parse JSON with tool_calls', () => {
+        const jsonData = {
+            id: 'chatcmpl-abc123',
+            object: 'chat.completion',
+            created: 1699000000,
+            model: 'gpt-4',
+            choices: [
+                {
+                    index: 0,
+                    message: {
+                        role: 'assistant',
+                        content: null,
+                        tool_calls: [
+                            {
+                                id: 'call_001',
+                                type: 'function',
+                                function: {
+                                    name: 'write_todos',
+                                    arguments: '{"todos":[{"id":"1","content":"test","status":"doing","priority":"high"}]}'
+                                }
+                            }
+                        ]
+                    },
+                    finish_reason: 'tool_calls'
+                }
+            ],
+            usage: {
+                prompt_tokens: 350,
+                completion_tokens: 200,
+                total_tokens: 550
+            }
+        };
+
+        const result = domManager._parseJsonArenaResponse(jsonData);
+
+        expect(result.content).toBe('');
+        expect(result.tool_calls).toHaveLength(1);
+        expect(result.tool_calls[0].function.name).toBe('write_todos');
+        expect(result.finish_reason).toBe('tool_calls');
+    });
+
+    test('_parseJsonArenaResponse should correctly parse JSON with content', () => {
+        const jsonData = {
+            content: 'Hello, this is my response',
+            finish_reason: 'stop'
+        };
+
+        const result = domManager._parseJsonArenaResponse(jsonData);
+
+        expect(result.content).toBe('Hello, this is my response');
+        expect(result.tool_calls).toBeNull();
+        expect(result.finish_reason).toBe('stop');
+    });
+
+    test('_extractJsonFromText should parse valid JSON string', () => {
+        const jsonString = '{"content": "test response", "finish_reason": "stop"}';
+        
+        const result = domManager._extractJsonFromText(jsonString);
+        
+        expect(result).not.toBeNull();
+        expect(result.content).toBe('test response');
+        expect(result.finish_reason).toBe('stop');
+    });
+
+    test('_extractJsonFromText should return null for non-JSON string', () => {
+        const text = 'This is just plain text response';
+        
+        const result = domManager._extractJsonFromText(text);
+        
+        expect(result).toBeNull();
+    });
+
+    test('_extractJsonFromText should return null for invalid JSON', () => {
+        const invalidJson = '{not valid json';
+        
+        const result = domManager._extractJsonFromText(invalidJson);
+        
+        expect(result).toBeNull();
+    });
+
+    test('_extractJsonFromText should parse JSON from code block', () => {
+        const text = 'Here is the response:\n```json\n{"content": "test response", "finish_reason": "stop"}\n```';
+        
+        const result = domManager._extractJsonFromText(text);
+        
+        expect(result).not.toBeNull();
+        expect(result.content).toBe('test response');
+        expect(result.finish_reason).toBe('stop');
+    });
+
+    test('_extractJsonFromText should parse JSON from code block with extra whitespace', () => {
+        const text = '```json\n  {"content": "hello", "finish_reason": "stop"}\n  ```';
+        
+        const result = domManager._extractJsonFromText(text);
+        
+        expect(result).not.toBeNull();
+        expect(result.content).toBe('hello');
+        expect(result.finish_reason).toBe('stop');
+    });
+
+    test('_parseResponse should parse JSON from code block', () => {
+        const message = 'Here is my response:\n```json\n{"content": "test", "finish_reason": "stop"}\n```';
+        
+        const result = domManager._parseResponse(message);
+        
+        expect(result.content).toBe('test');
+        expect(result.finish_reason).toBe('stop');
+    });
+
+    test('_parseResponse should parse JSON from code block with tool_calls', () => {
+        const message = '```json\n{"content": "", "finish_reason": "tool_calls", "tool_calls": [{"id": "1", "type": "function", "function": {"name": "test", "arguments": "{}"}}]}\n```';
+        
+        const result = domManager._parseResponse(message);
+        
+        expect(result.content).toBe('');
+        expect(result.finish_reason).toBe('tool_calls');
+        expect(result.tool_calls).toHaveLength(1);
+        expect(result.tool_calls[0].function.name).toBe('test');
+    });
+
+    test('_parseResponse should use last JSON code block when multiple present', () => {
+        const message = 'Some text before\n```json\n{"content": "first", "finish_reason": "stop"}\n```\n\n```json\n{"content": "last response", "finish_reason": "stop"}\n```';
+        
+        const result = domManager._parseResponse(message);
+        
+        expect(result.content).toBe('last response');
+    });
+
+    test('_extractJsonFromText should use last JSON code block when multiple present', () => {
+        const text = '```json\n{"content": "first"}\n```\n\n```json\n{"content": "last", "finish_reason": "stop"}\n```';
+        
+        const result = domManager._extractJsonFromText(text);
+        
+        expect(result.content).toBe('last');
+    });
+});

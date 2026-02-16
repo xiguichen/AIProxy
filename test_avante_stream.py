@@ -25,7 +25,7 @@ from typing import Generator, Optional
 
 API_BASE = "http://localhost:8000"
 DEFAULT_MODEL = "your-model-name"
-DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant. Answer the user's questions clearly and concisely."
+DEFAULT_SYSTEM_PROMPT = "You are an agent that supports tool calls. Always return your response in OpenAI standard. Each time you get a request, respond with the JSON format."
 
 
 class AvanteStreamTester:
@@ -56,7 +56,7 @@ class AvanteStreamTester:
 
         messages.append({
             "role": "user",
-            "content": f"<task>{task}</task>",
+            "content": json.dumps({"task": task}),
             "tool_calls": None,
             "tool_call_id": None
         })
@@ -152,8 +152,8 @@ class AvanteStreamTester:
             sys.exit(1)
 
         if stream:
-            # Don't read all at once, let it stream
-            return self._parse_stream(response), None
+            # Return events generator and None for dict response
+            return None, self._parse_stream(response)
         else:
             response_body = json.loads(response.read().decode("utf-8"))
             return response_body, None
@@ -161,10 +161,17 @@ class AvanteStreamTester:
     def _parse_stream(self, response) -> Generator[str, None, None]:
         """Parse SSE stream and yield events."""
         buffer = ""
-        for line in response:
-            # line is already bytes from generator
+        
+        while True:
+            try:
+                line = response.readline()
+                if not line:
+                    break
+            except Exception as e:
+                print(f"[!] Error reading stream: {e}")
+                break
+            
             if isinstance(line, int):
-                # When iterating bytes, we get integers
                 line = bytes([line])
             line = line.decode("utf-8")
             buffer += line
@@ -227,7 +234,10 @@ class AvanteStreamTester:
 
             print(f"Role: {role}")
             print(f"Finish Reason: {finish_reason}")
-            print(f"Content: {content[:200]}{'...' if len(content) > 200 else ''}")
+            if content:
+                print(f"Content: {content[:200]}{'...' if len(content) > 200 else ''}")
+            else:
+                print(f"Content: (empty - has tool_calls)")
 
             if tool_calls:
                 print(f"\nTool Calls ({len(tool_calls)}):")
@@ -348,12 +358,17 @@ def test_streaming_request(tester: AvanteStreamTester):
 
     response, events = tester.send_request(request, stream=True)
 
+    print(f"[DEBUG] response type: {type(response)}, events type: {type(events)}")
+    if response:
+        print(f"[DEBUG] response keys: {response.keys() if isinstance(response, dict) else 'not dict'}")
+    
     if response and "error" in response:
         print(f"[X] Connection error during stream: {response['error']}")
         return response
 
     if events is None:
         print("[X] Events is None, cannot process stream")
+        print(f"[DEBUG] Full response: {response}")
         return response
 
     result = tester.print_stream_events(events)

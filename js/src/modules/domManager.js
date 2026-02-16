@@ -221,9 +221,7 @@ export class DOMManager {
      * Extract clean text from an AI message element for Arena.ai.
      *
      * Arena.ai renders the AI response as rich HTML: paragraphs, code blocks
-     * with syntax highlighting, lists, etc. The XML markers like <content>,
-     * </content>, <tool_calls>, <response_done> are HTML-escaped in the source
-     * as &lt;content&gt; etc., so they appear as literal text in textContent.
+     * with syntax highlighting, lists, etc.
      *
      * The problem with using plain textContent is that code block UI chrome
      * (language labels like "text", copy button text, SVG content) gets mixed
@@ -233,11 +231,96 @@ export class DOMManager {
      * only the actual content text.
      *
      * @param {Element} element - The .prose message container element
-     * @returns {string} Clean extracted text with XML markers preserved
+     * @returns {string} Clean extracted text
      */
     _extractArenaMessage(element) {
         if (!element) return '';
         return this._walkArenaNodes(element).trim();
+    }
+
+    /**
+     * Try to detect and extract JSON from a code block in Arena.ai.
+     * Looks for <div data-code-block="true"> with JSON content.
+     * @param {Element} messageElement - The .prose message container
+     * @returns {Object|null} Parsed JSON object or null if not found
+     */
+    _extractJsonFromArenaMessage(messageElement) {
+        if (!messageElement) return null;
+
+        const codeBlocks = messageElement.querySelectorAll('[data-code-block="true"]');
+        
+        for (const block of codeBlocks) {
+            const header = block.querySelector('.border-border.flex.items-center.justify-between');
+            if (!header) continue;
+            
+            const label = header.querySelector('span.text-sm.font-medium');
+            if (!label || label.textContent.trim().toUpperCase() !== 'JSON') continue;
+            
+            const codeContainer = block.querySelector('.code-block_container__lbMX4') ||
+                                  block.querySelector('[class*="code-block_container"]');
+            if (!codeContainer) continue;
+            
+            const codeEl = codeContainer.querySelector('code');
+            if (!codeEl) continue;
+            
+            let jsonText = '';
+            const lines = codeEl.querySelectorAll('.line');
+            if (lines.length > 0) {
+                for (const line of lines) {
+                    jsonText += line.textContent;
+                }
+            } else {
+                jsonText = codeEl.textContent;
+            }
+            
+            try {
+                const parsed = JSON.parse(jsonText);
+                console.log('🔍 [JSON] 解析到JSON代码块:', Object.keys(parsed));
+                return parsed;
+            } catch (e) {
+                console.warn('⚠️ [JSON] 解析失败:', e.message);
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Try to extract JSON from raw message text (for direct JSON responses).
+     * @param {string} messageText - The raw message text
+     * @returns {Object|null} Parsed JSON object or null if not valid JSON
+     */
+    _extractJsonFromText(messageText) {
+        if (!messageText) return null;
+        
+        const trimmed = messageText.trim();
+        
+        // Try direct JSON first
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                console.log('🔍 [JSON] 从文本解析到JSON:', Object.keys(parsed));
+                return parsed;
+            } catch (e) {
+                console.warn('⚠️ [JSON] 文本解析失败:', e.message);
+            }
+        }
+        
+        // Try to extract JSON from code blocks (use last one)
+        const jsonCodeBlockMatches = trimmed.match(/```json\s*([\s\S]*?)\s*```/g);
+        if (jsonCodeBlockMatches && jsonCodeBlockMatches.length > 0) {
+            const lastMatch = jsonCodeBlockMatches[jsonCodeBlockMatches.length - 1];
+            const jsonText = lastMatch.replace(/```json\s*/, '').replace(/\s*```$/, '').trim();
+            try {
+                const parsed = JSON.parse(jsonText);
+                console.log('🔍 [JSON] 从最后一个代码块解析到JSON:', Object.keys(parsed));
+                return parsed;
+            } catch (e) {
+                console.warn('⚠️ [JSON] 代码块解析失败:', e.message);
+            }
+        }
+        
+        return null;
     }
 
     /**
@@ -383,64 +466,51 @@ export class DOMManager {
     }
 
     /**
-     * Parse XML-formatted AI response to extract content and tool_calls.
-     * The XML markers are literal text (decoded from &lt;/&gt; HTML entities).
+     * Parse AI response to extract content, tool_calls, and finish_reason.
+     * Expects JSON format: {"content": "...", "finish_reason": "...", "tool_calls": [...]}
+     * Also handles JSON wrapped in ```json code blocks
      * @param {string} message - The raw message text
-     * @returns {{content: string, tool_calls: Array|null}} Parsed response
+     * @returns {{content: string, tool_calls: Array|null, finish_reason: string}} Parsed response
      */
-    _parseXmlResponse(message) {
+    _parseResponse(message) {
         if (!message) {
-            return { content: '', tool_calls: null };
+            return { content: '', tool_calls: null, finish_reason: 'stop' };
         }
 
-        let finalContent = '';
-        let toolCalls = null;
+        const trimmed = message.trim();
 
-        // Extract <content>...</content>
-        const contentStartTag = '<content>';
-        const contentEndTag = '</content>';
-        const contentStartIdx = message.indexOf(contentStartTag);
-        const contentEndIdx = message.indexOf(contentEndTag);
-
-        if (contentStartIdx !== -1 && contentEndIdx !== -1 && contentEndIdx > contentStartIdx) {
-            finalContent = message.substring(
-                contentStartIdx + contentStartTag.length,
-                contentEndIdx
-            ).trim();
-        } else {
-            // No valid content tags — use everything before <response_done>
-            const responseDoneIdx = message.indexOf('<response_done>');
-            if (responseDoneIdx !== -1) {
-                finalContent = message.substring(0, responseDoneIdx).trim();
-            } else {
-                finalContent = message.trim();
+        // Try direct JSON first
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                return {
+                    content: parsed.content || '',
+                    tool_calls: parsed.tool_calls || null,
+                    finish_reason: parsed.finish_reason || 'stop'
+                };
+            } catch (e) {
+                // Silent fail
             }
         }
 
-        // Extract <tool_calls>...</tool_calls>
-        const toolCallsStartTag = '<tool_calls>';
-        const toolCallsEndTag = '</tool_calls>';
-        const toolCallsStartIdx = message.indexOf(toolCallsStartTag);
-        const toolCallsEndIdx = message.indexOf(toolCallsEndTag);
-
-        if (toolCallsStartIdx !== -1 && toolCallsEndIdx !== -1 && toolCallsEndIdx > toolCallsStartIdx) {
-            const toolCallsJson = message.substring(
-                toolCallsStartIdx + toolCallsStartTag.length,
-                toolCallsEndIdx
-            ).trim();
-
-            if (toolCallsJson.length > 0) {
-                try {
-                    toolCalls = JSON.parse(toolCallsJson);
-                    console.log('🔧 解析到tool_calls:', toolCalls.length, '个');
-                } catch (e) {
-                    console.warn('⚠️ 解析tool_calls JSON失败:', e.message,
-                                'raw:', toolCallsJson.substring(0, 100));
-                }
+        // Try to extract JSON from code blocks (use last one)
+        const jsonCodeBlockMatches = trimmed.match(/```json\s*([\s\S]*?)\s*```/g);
+        if (jsonCodeBlockMatches && jsonCodeBlockMatches.length > 0) {
+            const lastMatch = jsonCodeBlockMatches[jsonCodeBlockMatches.length - 1];
+            const jsonText = lastMatch.replace(/```json\s*/, '').replace(/\s*```$/, '').trim();
+            try {
+                const parsed = JSON.parse(jsonText);
+                return {
+                    content: parsed.content || '',
+                    tool_calls: parsed.tool_calls || null,
+                    finish_reason: parsed.finish_reason || 'stop'
+                };
+            } catch (e) {
+                // Silent fail
             }
         }
 
-        return { content: finalContent, tool_calls: toolCalls };
+        return { content: message.trim(), tool_calls: null, finish_reason: 'stop' };
     }
 
     async waitForAIResponse(baselineContent = null) {
@@ -469,7 +539,7 @@ export class DOMManager {
                 // If AI has been responding, return what we have
                 if (aiStartedResponding && lastContent) {
                     console.warn('⚠️ 全局超时，返回已收到的内容，长度:', lastContent.length);
-                    const parsed = this._parseXmlResponse(lastContent);
+                    const parsed = this._parseResponse(lastContent);
                     if (parsed.content.length > 0) {
                         return parsed;
                     }
@@ -484,7 +554,7 @@ export class DOMManager {
                 const timeSinceLastChange = now - lastChangeTime;
                 if (timeSinceLastChange > ACTIVITY_TIMEOUT && stableCount >= REQUIRED_STABLE_CHECKS) {
                     console.log('⏰ AI已停止输出超过60秒，返回已收到的内容，长度:', lastContent.length);
-                    const parsed = this._parseXmlResponse(lastContent);
+                    const parsed = this._parseResponse(lastContent);
                     if (parsed.content.length > 0) {
                         return parsed;
                     }
@@ -495,6 +565,7 @@ export class DOMManager {
             await delay(POLL_INTERVAL);
 
             const latestMessage = this.getLatestMessage();
+            const latestElement = this._getLatestMessageElement();
 
             // Check if content has changed from baseline
             const hasChanged = latestMessage !== null &&
@@ -518,31 +589,160 @@ export class DOMManager {
                 console.log('🟢 检测到AI开始响应');
             }
 
-            // Check for <response_done> marker — definitive completion signal
-            if (latestMessage.includes('<response_done>')) {
-                // Found completion marker — wait a moment for final rendering
-                await delay(1500);
-                const finalMessage = this.getLatestMessage();
-
-                const parsed = this._parseXmlResponse(finalMessage);
-                console.log('🤖 收到AI回复（XML格式），内容长度:', parsed.content.length,
-                            'tool_calls:', parsed.tool_calls ? parsed.tool_calls.length : 0);
-                return parsed;
+            // Check for JSON code block (Arena.ai streaming responses)
+            if (latestElement) {
+                console.log('🔍 [JSON] 检查元素中的JSON代码块...');
+                const jsonData = this._extractJsonFromArenaMessage(latestElement);
+                if (jsonData) {
+                    console.log('🔍 [JSON] 检测到JSON代码块响应:', Object.keys(jsonData));
+                    await delay(1500);
+                    const finalMessage = this.getLatestMessage();
+                    const finalElement = this._getLatestMessageElement();
+                    const finalJsonData = this._extractJsonFromArenaMessage(finalElement);
+                    
+                    if (finalJsonData) {
+                        return this._parseJsonArenaResponse(finalJsonData);
+                    }
+                } else {
+                    console.log('🔍 [JSON] 元素中未找到JSON代码块');
+                }
+            } else {
+                console.log('🔍 [JSON] latestElement为空');
             }
 
-            // No response_done yet — track stability
+            // Check for JSON in raw text (direct JSON responses)
+            if (latestMessage && latestMessage.trim().startsWith('{')) {
+                const jsonData = this._extractJsonFromText(latestMessage);
+                if (jsonData && jsonData.content !== undefined) {
+                    console.log('🔍 [JSON] 检测到直接JSON响应');
+                    return {
+                        content: jsonData.content || '',
+                        tool_calls: jsonData.tool_calls || null,
+                        finish_reason: jsonData.finish_reason || 'stop'
+                    };
+                }
+            } else {
+                console.log('🔍 [JSON] 消息不是以{开头, 前50字符:', latestMessage?.substring(0, 50));
+            }
+
+            // Track stability for response completion
             if (latestMessage === lastContent) {
                 stableCount++;
                 console.log(`🔍 内容未变化，稳定计数: ${stableCount}/${REQUIRED_STABLE_CHECKS}`);
-                // Don't return yet — wait for activity timeout or response_done
-            } else {
-                // Content changed — reset stability counter and update deadline
+                
+                // If stable for enough checks and AI has started, return the response
+                if (stableCount >= REQUIRED_STABLE_CHECKS && aiStartedResponding) {
+                    console.log('🔍 内容稳定，尝试解析响应...');
+                    
+                    // Try to parse as JSON one more time before returning
+                    if (latestMessage && latestMessage.trim().startsWith('{')) {
+                        const jsonData = this._extractJsonFromText(latestMessage);
+                        if (jsonData && jsonData.content !== undefined) {
+                            console.log('🔍 [JSON] 稳定后解析到JSON响应');
+                            return {
+                                content: jsonData.content || '',
+                                tool_calls: jsonData.tool_calls || null,
+                                finish_reason: jsonData.finish_reason || 'stop'
+                            };
+                        }
+                    }
+                    
+                    // Also try from element
+                    if (latestElement) {
+                        const jsonData = this._extractJsonFromArenaMessage(latestElement);
+                        if (jsonData) {
+                            console.log('🔍 [JSON] 稳定后从元素解析到JSON');
+                            return this._parseJsonArenaResponse(jsonData);
+                        }
+                    }
+                    
+                    // Return as plain text if no JSON found
+                    console.log('🔍 返回纯文本响应，长度:', latestMessage?.length || 0);
+                    return { content: latestMessage || '', tool_calls: null, finish_reason: 'stop' };
+                }
+            }
+            
+            // Content changed — reset stability counter and update deadline
+            if (latestMessage !== lastContent) {
                 stableCount = 0;
                 lastChangeTime = Date.now();
                 console.log('🔄 内容变化，重置活动计时器');
             }
             lastContent = latestMessage;
         }
+    }
+
+    /**
+     * Get the latest AI message element (for Arena.ai).
+     * @returns {Element|null}
+     */
+    _getLatestMessageElement() {
+        const container = findElement(CONFIG.selectors.messageListContainer);
+        if (!container) return null;
+
+        if (window.location.hostname === 'arena.ai' || window.location.hostname.endsWith('.arena.ai')) {
+            const messageElements = container.querySelectorAll('.mx-auto.max-w-\\[800px\\]');
+            if (messageElements.length === 0) return null;
+
+            for (let i = 0; i < messageElements.length; i++) {
+                const el = messageElements[i];
+                if (!el.classList.contains('justify-end')) {
+                    const prose = el.querySelector('.prose');
+                    if (prose) {
+                        return prose;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Parse JSON response from Arena.ai code blocks.
+     * @param {Object} jsonData - Parsed JSON object from code block
+     * @returns {{content: string, tool_calls: Array|null, finish_reason: string}}
+     */
+    _parseJsonArenaResponse(jsonData) {
+        console.log('🔍 [JSON] 解析Arena.ai JSON响应');
+        
+        let content = '';
+        let toolCalls = null;
+        let finishReason = 'stop';
+        
+        if (jsonData.choices && jsonData.choices.length > 0) {
+            const choice = jsonData.choices[0];
+            if (choice.message) {
+                content = choice.message.content || '';
+                if (choice.message.tool_calls) {
+                    toolCalls = choice.message.tool_calls;
+                }
+            }
+            if (choice.delta && choice.delta.content) {
+                content = choice.delta.content;
+            }
+            if (choice.delta && choice.delta.tool_calls) {
+                toolCalls = choice.delta.tool_calls;
+            }
+            if (choice.finish_reason) {
+                finishReason = choice.finish_reason;
+            }
+        }
+        
+        if (jsonData.content !== undefined && jsonData.content !== null) {
+            content = jsonData.content;
+        }
+        
+        if (jsonData.tool_calls && !toolCalls) {
+            toolCalls = jsonData.tool_calls;
+        }
+        
+        if (jsonData.finish_reason) {
+            finishReason = jsonData.finish_reason;
+        }
+        
+        console.log('🔍 [JSON] 内容长度:', content?.length || 0, 'tool_calls:', toolCalls ? toolCalls.length : 0, 'finish_reason:', finishReason);
+        
+        return { content, tool_calls: toolCalls, finish_reason: finishReason };
     }
 
     getMessageCount() {
